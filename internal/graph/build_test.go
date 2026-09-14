@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/nickelsec/bough/internal/agent"
+	"github.com/nickelsec/bough/internal/repo"
 )
 
 var fixedNow = func() time.Time { return time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC) }
@@ -216,5 +217,126 @@ func TestCommitsMadeElsewhereAreNotThisProjects(t *testing.T) {
 		if got := here(c.dir, c.project); got != c.want {
 			t.Errorf("%s: here(%q, %q) = %v, want %v", c.name, c.dir, c.project, got, c.want)
 		}
+	}
+}
+
+// A commit made after moving into a subdirectory still belongs to the project.
+//
+// `cd internal && git commit` runs in this repository. The recorded directory
+// is the bare "internal", which never equalled an absolute project path, so
+// the commit was dropped from the diagram with nothing said. Only an absolute
+// path can name somewhere else, because only an absolute path says where it
+// starts from.
+func TestCommitInASubdirectoryIsKept(t *testing.T) {
+	const proj = "/home/me/proj"
+	for _, c := range []struct {
+		dir  string
+		want bool
+		why  string
+	}{
+		{"", true, "a command that does not move runs where the session is"},
+		{proj, true, "the project itself"},
+		{"internal", true, "cd into a subdirectory is still this repository"},
+		{"./internal", true, "the same, written with a leading dot"},
+		{"internal/agent/codex", true, "deeper down is still inside"},
+		{"/home/me/other", false, "an absolute path somewhere else"},
+		{"../other", false, "relative, but it climbs out of the project"},
+		{"..", false, "the parent directory is not this project"},
+	} {
+		if got := here(c.dir, proj); got != c.want {
+			t.Errorf("here(%q) = %v, want %v: %s", c.dir, got, c.want, c.why)
+		}
+	}
+}
+
+// The two spellings of a Windows drive are one place, and a relative path is
+// still relative whichever way the project is written.
+func TestCommitDirAcrossDriveSpellings(t *testing.T) {
+	for _, c := range []struct {
+		dir, project string
+		want         bool
+	}{
+		{"d:/work/site", "d:/work/site", true},
+		{"/d/work/site", "d:/work/site", true},
+		{"d:/work/other", "d:/work/site", false},
+		{"internal", "d:/work/site", true},
+	} {
+		if got := here(c.dir, c.project); got != c.want {
+			t.Errorf("here(%q, %q) = %v, want %v", c.dir, c.project, got, c.want)
+		}
+	}
+}
+
+// Matching a commit to the repository must not depend on the order the
+// sessions happened to be walked in.
+//
+// Each repository commit goes to one agent commit, and it used to go to
+// whichever reached it first. Two commits inside the same window meant the
+// earlier-visited one took it, closer or not, and sessions are grouped by file
+// rather than by time so that order is not even the order work happened in.
+func TestCommitMatchingDoesNotDependOnOrder(t *testing.T) {
+	when := func(s string) time.Time {
+		v, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+
+	have := []repo.Commit{
+		{SHA: "aaa", When: when("2026-08-22T10:00:00Z")},
+		{SHA: "bbb", When: when("2026-08-22T10:00:10Z")},
+	}
+
+	// A@10:00:05 is five seconds from either. B@10:00:00 is exactly on aaa.
+	//
+	// Settling in walk order gives aaa to A, because it is visited first and
+	// aaa is as close as bbb, and B is left with bbb ten seconds away. Settling
+	// the closest pair first gives aaa to B and bbb to A, which is the reading
+	// that matches what happened.
+	a := &agent.Commit{At: when("2026-08-22T10:00:05Z")}
+	b := &agent.Commit{At: when("2026-08-22T10:00:00Z")}
+
+	// Walked one way, then the other. The answer has to be the same.
+	for _, order := range [][]*agent.Commit{{a, b}, {b, a}} {
+		a.SHA, b.SHA = "", ""
+		h := append([]repo.Commit(nil), have...)
+
+		if missed := pair(order, h, matchWindow); len(missed) != 0 {
+			t.Errorf("%d commits went unmatched, want 0", len(missed))
+		}
+		if b.SHA != "aaa" {
+			t.Errorf("the commit sitting on aaa got %q, want aaa", b.SHA)
+		}
+		if a.SHA != "bbb" {
+			t.Errorf("the commit five seconds from either got %q, want bbb", a.SHA)
+		}
+	}
+}
+
+// A repository commit is handed out once, and a commit with nothing near it
+// comes back as unmatched rather than borrowing someone else's hash.
+func TestPairHandsOutEachCommitOnce(t *testing.T) {
+	when, err := time.Parse(time.RFC3339, "2026-08-22T10:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	have := []repo.Commit{{SHA: "aaa", When: when}}
+
+	first := &agent.Commit{At: when.Add(time.Second)}
+	second := &agent.Commit{At: when.Add(2 * time.Second)}
+	far := &agent.Commit{At: when.Add(time.Hour)}
+	zero := &agent.Commit{}
+
+	missed := pair([]*agent.Commit{first, second, far, zero}, have, matchWindow)
+
+	if first.SHA != "aaa" {
+		t.Errorf("closest got %q, want aaa", first.SHA)
+	}
+	if second.SHA != "" {
+		t.Errorf("second got %q, want nothing: aaa is spoken for", second.SHA)
+	}
+	if len(missed) != 3 {
+		t.Errorf("%d unmatched, want 3", len(missed))
 	}
 }

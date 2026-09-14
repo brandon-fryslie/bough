@@ -5,7 +5,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
 // A project that is not a repository, or has moved, is the ordinary case rather
@@ -57,47 +56,6 @@ func TestParseLogIgnoresBinaryCounts(t *testing.T) {
 	}
 	if got[0].Files != 2 {
 		t.Errorf("got %d files, want 2", got[0].Files)
-	}
-}
-
-func TestNearMatchesTheClosestCommitOnlyOnce(t *testing.T) {
-	at := func(s string) time.Time {
-		v, err := time.Parse(time.RFC3339, s)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return v
-	}
-	h := History{Commits: []Commit{
-		{SHA: "aaa", When: at("2026-08-22T10:00:00Z")},
-		{SHA: "bbb", When: at("2026-08-22T10:00:20Z")},
-	}}
-
-	// Nearest wins.
-	if got := h.Near(at("2026-08-22T10:00:03Z"), time.Minute); got == nil || got.SHA != "aaa" {
-		t.Fatalf("got %v, want aaa", got)
-	}
-	// And is not handed out twice, so a second event close to the same commit
-	// takes the next one rather than repeating it.
-	if got := h.Near(at("2026-08-22T10:00:04Z"), time.Minute); got == nil || got.SHA != "bbb" {
-		t.Fatalf("got %v, want bbb", got)
-	}
-	// Nothing left within the window.
-	if got := h.Near(at("2026-08-22T10:00:05Z"), time.Minute); got != nil {
-		t.Errorf("got %v, want nil once every commit is spoken for", got)
-	}
-}
-
-func TestNearRespectsTheWindow(t *testing.T) {
-	when, _ := time.Parse(time.RFC3339, "2026-08-22T10:00:00Z")
-	h := History{Commits: []Commit{{SHA: "aaa", When: when}}}
-
-	far := when.Add(10 * time.Minute)
-	if got := h.Near(far, 90*time.Second); got != nil {
-		t.Errorf("got %v, want nil for a commit outside the window", got)
-	}
-	if got := h.Near(time.Time{}, time.Minute); got != nil {
-		t.Errorf("got %v, want nil for a zero time", got)
 	}
 }
 

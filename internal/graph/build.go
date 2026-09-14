@@ -5,6 +5,7 @@ import (
 	"math"
 	"path"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -294,27 +295,31 @@ func fromRepo(dir string, sessions []agent.Session) {
 	if len(h.Commits) == 0 {
 		return
 	}
+	// Every commit the agent made, gathered before any of them is matched.
+	//
+	// Matching one at a time as they were walked let the order sessions
+	// happened to be in decide the answer. A repository commit is claimed by
+	// the first agent commit to reach it, so when two fell inside the same
+	// window the one visited first took it, whether or not it was the closer.
+	// Sessions are grouped by file rather than by time, so that order is not
+	// even the order the work happened in.
+	var made []*agent.Commit
 	for _, sess := range sessions {
 		for i := range sess.Turns {
 			for j := range sess.Turns[i].Committed {
-				c := &sess.Turns[i].Committed[j]
-				found := h.Near(c.At, matchWindow)
-				if found == nil {
-					// The repository was read and has no commit here, so any
-					// hash the transcript carried is one the repository can no
-					// longer reach: rebased, amended, or dropped. Showing it
-					// would offer the reader something to check that does not
-					// check out, which is worse than showing nothing.
-					c.SHA = ""
-					c.Branch = ""
-					continue
-				}
-				c.SHA = found.SHA
-				c.Subject = found.Subject
-				c.Added = found.Added
-				c.Removed = found.Removed
+				made = append(made, &sess.Turns[i].Committed[j])
 			}
 		}
+	}
+
+	for _, c := range pair(made, h.Commits, matchWindow) {
+		// The repository was read and has no commit here, so any hash the
+		// transcript carried is one the repository can no longer reach:
+		// rebased, amended, or dropped. Showing it would offer the reader
+		// something to check that does not check out, which is worse than
+		// showing nothing.
+		c.SHA = ""
+		c.Branch = ""
 	}
 }
 
@@ -345,9 +350,40 @@ func onlyHere(dir string, sessions []agent.Session) {
 // here reports whether a commit was made in this project's own directory.
 //
 // A command that does not move is running where the session is, which is here.
+//
+// So is one that moves somewhere relative. `cd internal && git commit` runs in
+// a subdirectory of the session, which is still this repository, and comparing
+// the bare "internal" against an absolute project path never matched: a real
+// commit in this project was dropped from the diagram without a word. Only an
+// absolute path can name somewhere else, because only an absolute path says
+// where it starts from.
+//
+// A path that climbs out with .. is the exception. It is relative but it can
+// leave the project, so it is resolved against the project and compared.
 func here(in, project string) bool {
-	return in == "" || sameDir(in, project)
+	if in == "" {
+		return true
+	}
+	if !rooted(in) {
+		if !strings.Contains(in, "..") {
+			return true
+		}
+		return sameDir(path.Join(driveForm(project), in), project)
+	}
+	return sameDir(in, project)
 }
+
+// rooted reports whether a path says for itself where it starts.
+//
+// Both spellings of a Windows drive count, since a transcript carries "d:/x"
+// and "/d/x" for the same place, and both are absolute.
+func rooted(p string) bool {
+	p = strings.ReplaceAll(p, `\`, "/")
+	return strings.HasPrefix(p, "/") || driveLetter.MatchString(p)
+}
+
+// driveLetter matches a path that opens with a Windows drive, as "d:/work".
+var driveLetter = regexp.MustCompile(`^[a-zA-Z]:/`)
 
 // sameDir compares two paths for being the same place.
 //
@@ -376,3 +412,78 @@ func driveForm(p string) string {
 // shellDrive matches the "/d/some/path" a unix style shell uses for a Windows
 // drive, so it can be written the way the transcript records it.
 var shellDrive = regexp.MustCompile(`^/([a-z])/(.*)$`)
+
+// pair matches the commits an agent made to the ones in the repository,
+// closest pair first, and returns the ones nothing matched.
+//
+// Matching them one at a time let the order sessions were walked in decide the
+// answer: a repository commit went to the first agent commit that reached it,
+// so when two fell inside the same window the one visited first took it,
+// closer or not. Sessions are grouped by file rather than by time, so that
+// order is not even the order the work happened in.
+//
+// Deciding all of them together removes the question. Every pair inside the
+// window is measured, the closest is settled first, and each side drops out
+// once it is spoken for. Ties fall to the earlier commit so the same input
+// always gives the same answer.
+func pair(made []*agent.Commit, have []repo.Commit, window time.Duration) []*agent.Commit {
+	type link struct {
+		made, have int
+		gap        time.Duration
+	}
+
+	var links []link
+	for m, c := range made {
+		if c == nil || c.At.IsZero() {
+			continue
+		}
+		for h := range have {
+			if have[h].When.IsZero() {
+				continue
+			}
+			gap := have[h].When.Sub(c.At)
+			if gap < 0 {
+				gap = -gap
+			}
+			if gap > window {
+				continue
+			}
+			links = append(links, link{made: m, have: h, gap: gap})
+		}
+	}
+
+	sort.SliceStable(links, func(i, j int) bool {
+		if links[i].gap != links[j].gap {
+			return links[i].gap < links[j].gap
+		}
+		if links[i].have != links[j].have {
+			return links[i].have < links[j].have
+		}
+		return links[i].made < links[j].made
+	})
+
+	tookMade := make([]bool, len(made))
+	tookHave := make([]bool, len(have))
+	for _, l := range links {
+		if tookMade[l.made] || tookHave[l.have] {
+			continue
+		}
+		tookMade[l.made] = true
+		tookHave[l.have] = true
+
+		found := have[l.have]
+		c := made[l.made]
+		c.SHA = found.SHA
+		c.Subject = found.Subject
+		c.Added = found.Added
+		c.Removed = found.Removed
+	}
+
+	var missed []*agent.Commit
+	for i, c := range made {
+		if c != nil && !tookMade[i] {
+			missed = append(missed, c)
+		}
+	}
+	return missed
+}
