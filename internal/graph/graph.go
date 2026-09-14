@@ -15,7 +15,12 @@ import "time"
 // SchemaVersion is bumped when the shape below changes in a way that would
 // break a reader. Consumers should check it and refuse politely rather than
 // misread newer output.
-const SchemaVersion = 1
+//
+// 2: a delegation's task name moved from "kind" to "name". Both facts were
+// being written into one field, and which one it held depended on the agent:
+// Claude put the sort of sub-agent there and Codex the name of the task. A
+// reader that took "kind" as the task name now finds it empty on Codex.
+const SchemaVersion = 2
 
 // Graph is one project's history.
 type Graph struct {
@@ -52,10 +57,28 @@ type Project struct {
 	// Agent names where the history came from, for example "claude-code".
 	Agent string `json:"agent"`
 
+	// AgentName is the same agent as a person would read it, "Claude Code".
+	//
+	// Carried rather than worked out by whoever is drawing. The page used to
+	// hold its own copy of the switch that does this, with a comment saying it
+	// mirrored the Go one, which is the arrangement that lets two things that
+	// must agree stop agreeing.
+	AgentName string `json:"agentName,omitempty"`
+
 	// Sessions is how many separate sittings-with-the-agent this covers. It is
 	// reported because it is a fact about the record, not because it maps to
 	// anything the user would recognise as a unit of work.
 	Sessions int `json:"sessions"`
+
+	// RepoRead says the project's git history was consulted.
+	//
+	// It decides what a commit hash means. Read, and a hash is one the
+	// repository confirmed: anything it could not find has been cleared. Not
+	// read, and every hash is whatever the transcript claimed, unverified.
+	// Without this the two are indistinguishable in the output, which matters
+	// because "not a git repository", "git is not installed" and "--no-repo"
+	// all arrive here looking the same.
+	RepoRead bool `json:"repoRead"`
 }
 
 // Goal is a stretch of work done in one sitting.
@@ -113,7 +136,10 @@ type Turn struct {
 
 // Delegation is a unit of work given to a sub-agent.
 type Delegation struct {
+	// Kind is the sort of sub-agent, Name is what the task was called, and
+	// either may be absent: agents record one or the other, rarely both.
 	Kind        string `json:"kind,omitempty"`
+	Name        string `json:"name,omitempty"`
 	Description string `json:"description"`
 }
 

@@ -48,21 +48,10 @@
   var home = 1;
 
   // A day square is 36 units. Legible means about this many pixels for one,
-  // which keeps a prompt circle near eleven and comfortably clickable.
-  var READABLE = 32 / 36;
+  // which keeps a prompt circle near eleven and comfortably clickable. Defined
+  // in layout.js beside the scales that use it.
+  var READABLE = L.READABLE;
 
-  // The other end of the same question. Node sizes come from how much work
-  // they hold, so a project with one day of history draws a day square of 26
-  // units where a busy one draws 36, and a single task 14 where a busy day
-  // draws far more.
-  //
-  // Capping the opening scale at a fixed 1.1 therefore meant something quite
-  // different on a small project: the whole diagram came to forty pixels
-  // across in the middle of a window fourteen hundred wide, geometrically
-  // centred and still reading as lost. The cap belongs on how big a node ends
-  // up rather than on the raw scale, which is the same measure READABLE uses
-  // at the small end.
-  var COMFORTABLE = 72 / 36;
 
   // The zoom range, as multiples of home rather than as absolute scales. An
   // absolute cap means something different on every project: at three it was
@@ -452,48 +441,17 @@
     };
   }
 
-  // wholeScale is the largest scale that still shows every day at once.
-  //
-  // The ceiling is the size a day square is allowed to reach, not a scale, so
-  // a short history fills its window instead of floating in the middle of it.
+  // Both of these live in layout.js. They are arithmetic over the layout
+  // rather than anything about drawing, and the check that guards them runs in
+  // node against that file: a copy here would be a copy the check cannot see.
   function wholeScale(seen, r) {
-    var s = Math.min(COMFORTABLE, r.h / seen.height, r.w / seen.width);
-
-    // The spine runs past the nodes at both ends, further at the arrow. It is
-    // not centred on, or the work sits off to one side, but it still has to
-    // fit, or the arrow is clipped by the edge of the window.
-    if (model.spine) {
-      var mid = seen.x + seen.width / 2;
-      var reach = Math.max(mid - (model.spine.x1 - 13), model.spine.x2 + 13 - mid) * 2;
-      if (reach > 0) s = Math.min(s, r.w / reach);
-    }
-    return s > 0 ? s : 1;
+    return L.wholeScale(seen, r, model.spine);
   }
 
-  // homeScale is where the view opens: legible, but never larger than showing
-  // the whole thing, since blowing up a two day history helps nobody.
   function homeScale(seen, r) {
-    var all = wholeScale(seen, r);
-    if (all >= READABLE) return all;
-
-    // Legible, but still bounded by the height. A ribbon may be scrolled
-    // sideways; one taller than the window has nowhere to go.
-    var legible = Math.min(READABLE, Math.max(all, r.h / seen.height));
-
-    // Showing the whole diagram is worth having, but never at the cost of the
-    // nodes being smaller than they need to be. Where the whole thing fits at
-    // the legible scale it is already being shown; where it does not, opening
-    // whole means shrinking below legible, and that is the thing being fixed.
-    //
-    // An earlier version took the whole view whenever it came within a fixed
-    // fraction of legible. That fraction ignored how much bigger the nodes
-    // would actually be, and it produced a diagram that shrank as the window
-    // grew: a twelve day history opened at thirty two pixels on a 1440 screen
-    // and thirty on a 1920 one, because the wider screen brought the whole
-    // view inside the threshold. A larger window must never give smaller
-    // nodes.
-    return Math.max(all, legible);
+    return L.homeScale(seen, r, model.spine);
   }
+
 
   // frame puts the view at a scale, centred, or against the end of a diagram
   // too wide to show at once.
@@ -938,10 +896,13 @@
       // are never trimmed.
       li.appendChild(node("p", "said", turn.text));
       // Agents differ in what they record about a hand-off. Claude writes a
-      // brief describing the work; Codex encrypts that and leaves only the name
-      // of the sub-agent. Showing the description alone left an empty line.
+      // brief describing the work and names the sort of sub-agent; Codex
+      // encrypts the brief and names the task instead. The brief is what
+      // somebody asked for so it wins, then the task's name, and the sort of
+      // sub-agent last since it says only who did the work. Showing the
+      // description alone left an empty line.
       (turn.delegated || []).forEach(function (job) {
-        var said = job.description || job.kind;
+        var said = job.description || job.name || job.kind;
         if (said) li.appendChild(node("p", "handoff", said));
       });
       // A commit sits under the prompt that produced it, so the record reads
@@ -1399,17 +1360,7 @@
     return String(s).replace(/([.:#[\]])/g, "\\$1");
   }
 
-  // agentName spells an agent the way a person would read it.
-  //
-  // The graph carries the source's own name for itself, which is not always
-  // what somebody wants to see. This mirrors agent.Display in Go, so the page
-  // and the terminal call the same tool the same thing. An agent nobody has
-  // named yet shows as it arrived, which beats an empty badge.
-  function agentName(source) {
-    if (source === "claude-code") return "Claude Code";
-    if (source === "codex") return "Codex";
-    return source || "";
-  }
+
 
   function chrome() {
     document.getElementById("name").textContent = graph.project.name;
@@ -1420,7 +1371,9 @@
     // choice of one.
     var badge = document.getElementById("agent");
     if (badge) {
-      var said = agentName(graph.project.agent);
+      // The graph carries the name already. Deriving it here meant a copy of
+      // the Go switch living in this file, and the two had already drifted.
+      var said = graph.project.agentName || graph.project.agent || "";
       badge.textContent = said;
       badge.hidden = said === "";
     }

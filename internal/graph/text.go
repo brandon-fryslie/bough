@@ -30,8 +30,18 @@ func WriteText(w io.Writer, g Graph, verbose bool) error {
 	}
 	// Only when there were any. A project that commits nothing does not need
 	// telling so every time it is read.
+	//
+	// A hash means two different things depending on whether the repository was
+	// consulted, so a reading that could not consult it says so. Otherwise "not
+	// a git repository", "git is not installed" and --no-repo all look the same
+	// as a clean confirmation, and every hash shown is a claim nothing checked.
 	if n := len(t.Commits); n > 0 {
-		fmt.Fprintf(w, "%s\n", plural(n, "commit"))
+		if p.RepoRead {
+			fmt.Fprintf(w, "%s\n", plural(n, "commit"))
+		} else {
+			fmt.Fprintf(w, "%s, as the transcript recorded them: the repository was not read\n",
+				plural(n, "commit"))
+		}
 	}
 	// Most of what a project costs is the model re-reading the conversation
 	// rather than writing anything, which is worth saying once.
@@ -246,11 +256,15 @@ func models(m map[string]int) string {
 //
 // Agents differ in what they record. Claude writes a brief before handing work
 // over, and that describes it. Codex encrypts the brief and leaves only the
-// name of the sub-agent, so the name is what there is to show. Printing the
+// name of the task, so the name is what there is to show. Printing the
 // description alone left a bare "handed off:" with nothing after it.
 func handoff(d Delegation) string {
-	if d.Description != "" {
+	switch {
+	case d.Description != "":
 		return d.Description
+	case d.Name != "":
+		return d.Name
+	default:
+		return d.Kind
 	}
-	return d.Kind
 }

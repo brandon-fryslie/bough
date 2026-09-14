@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/nickelsec/bough/internal/agent"
+	"github.com/nickelsec/bough/internal/agent/shell"
 )
 
 const maxLine = 16 << 20
@@ -25,7 +25,12 @@ type Source struct {
 }
 
 // Name identifies this agent source.
-func (Source) Name() string { return "codex" }
+// sourceName is what this package calls itself, in one place: the interface
+// method below and every Project it produces both read it.
+const sourceName = "codex"
+
+// Name identifies this agent, as every Project it produces spells it.
+func (Source) Name() string { return sourceName }
 
 func (s Source) root() (string, error) {
 	if s.Root != "" {
@@ -40,6 +45,11 @@ func (s Source) root() (string, error) {
 
 type projectGroup struct {
 	files []string
+
+	// shown is the path as it was written, kept for display. Grouping happens
+	// on the normalised form, which lower cases and folds a Windows drive, and
+	// that is not what anybody wants to read back.
+	shown string
 }
 
 // Detect reports all projects Codex CLI has history for.
@@ -71,12 +81,16 @@ func (s Source) Detect() ([]agent.Project, error) {
 		if cwd == "" {
 			return nil
 		}
-		cwd = filepath.Clean(cwd)
+		// Grouped on the normalised form, the same one every other path
+		// comparison in the tool uses. filepath.Clean only understands the
+		// separator the host happens to use, so the same project written two
+		// ways in one session became two projects.
+		key := agent.NormalisePath(cwd)
 
-		g := byPath[cwd]
+		g := byPath[key]
 		if g == nil {
-			g = &projectGroup{}
-			byPath[cwd] = g
+			g = &projectGroup{shown: filepath.Clean(cwd)}
+			byPath[key] = g
 		}
 		g.files = append(g.files, p)
 		return nil
@@ -86,17 +100,18 @@ func (s Source) Detect() ([]agent.Project, error) {
 	}
 
 	var projects []agent.Project
-	for pPath, g := range byPath {
+	for _, g := range byPath {
+		pPath := g.shown
 		refJSON, err := json.Marshal(g.files)
 		if err != nil {
 			continue
 		}
-		last, size := extent(g.files)
+		last, size := shell.Extent(g.files)
 
 		projects = append(projects, agent.Project{
 			Name:       filepath.Base(pPath),
 			Path:       pPath,
-			Source:     "codex",
+			Source:     sourceName,
 			Ref:        string(refJSON),
 			LastWorked: last,
 			Bytes:      size,
@@ -206,22 +221,6 @@ func ReadRecords(r io.Reader) ([]*Record, error) {
 		return nil, err
 	}
 	return recs, nil
-}
-
-func extent(files []string) (time.Time, int64) {
-	var last time.Time
-	var size int64
-	for _, fp := range files {
-		info, err := os.Stat(fp)
-		if err != nil {
-			continue
-		}
-		size += info.Size()
-		if info.ModTime().After(last) {
-			last = info.ModTime()
-		}
-	}
-	return last, size
 }
 
 func detectCWD(transcriptPath string) string {

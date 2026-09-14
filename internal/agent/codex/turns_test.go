@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/nickelsec/bough/internal/agent"
-	"github.com/nickelsec/bough/internal/agent/shell"
 )
 
 func TestExtractTurnsFromFixture(t *testing.T) {
@@ -43,7 +42,7 @@ func TestExtractTurnsFromFixture(t *testing.T) {
 	}
 
 	// Files and Edits
-	repoGo := shell.NormalisePath("/Users/alice/work/codex-app/repo.go")
+	repoGo := agent.NormalisePath("/Users/alice/work/codex-app/repo.go")
 	if turn.Files[repoGo] != 1 {
 		t.Errorf("expected 1 touch on repo.go, got %d", turn.Files[repoGo])
 	}
@@ -177,8 +176,8 @@ func TestPatchLinesLandOnTheirOwnFile(t *testing.T) {
 	}
 	applyPatch(&turn, patch)
 
-	one := shell.NormalisePath("/w/app/one.go")
-	two := shell.NormalisePath("/w/app/two.go")
+	one := agent.NormalisePath("/w/app/one.go")
+	two := agent.NormalisePath("/w/app/two.go")
 
 	if got := turn.Lines[one]; got != 3 {
 		t.Errorf("%s changed %d lines, want 3 (two added, one removed)", one, got)

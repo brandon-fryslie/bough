@@ -340,3 +340,48 @@ func TestPairHandsOutEachCommitOnce(t *testing.T) {
 		t.Errorf("%d unmatched, want 3", len(missed))
 	}
 }
+
+// Build leaves the sessions it was given exactly as it found them.
+//
+// Everything inside writes into the turns: onlyHere drops commits made in
+// another repository, and matching against git rewrites the hashes. Those
+// edits used to land in the caller's own slices, so a second Build on one set
+// of sessions saw the first one's leftovers and answered differently, and
+// nothing else could reuse them afterwards.
+func TestBuildDoesNotChangeTheSessionsItIsGiven(t *testing.T) {
+	when := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
+	sessions := func() []agent.Session {
+		return []agent.Session{{
+			ID: "s1",
+			Turns: []agent.Turn{{
+				At: when, Text: "do it",
+				Tools: map[string]int{}, Files: map[string]int{},
+				Edits: map[string]int{}, Lines: map[string]int{}, Models: map[string]int{},
+				Committed: []agent.Commit{
+					// One made somewhere else, which onlyHere drops.
+					{SHA: "aaaa111", At: when, Dir: "/elsewhere"},
+					{SHA: "bbbb222", At: when},
+				},
+			}},
+		}}
+	}
+
+	given := sessions()
+	opt := Options{Now: func() time.Time { return when }}
+
+	first := Build(agent.Project{Name: "p", Path: "/p"}, given, opt)
+
+	if got := len(given[0].Turns[0].Committed); got != 2 {
+		t.Errorf("the caller's commits went from 2 to %d", got)
+	}
+
+	// And the same input twice gives the same answer, which is only true if
+	// the first run left nothing behind.
+	second := Build(agent.Project{Name: "p", Path: "/p"}, given, opt)
+	if len(first.Goals) != len(second.Goals) {
+		t.Errorf("two builds of one input: %d goals then %d", len(first.Goals), len(second.Goals))
+	}
+	if a, b := first.Totals.Commits, second.Totals.Commits; len(a) != len(b) {
+		t.Errorf("two builds of one input: %d commits then %d", len(a), len(b))
+	}
+}

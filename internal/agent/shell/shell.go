@@ -12,9 +12,11 @@
 package shell
 
 import (
-	"path"
+	"os"
 	"regexp"
-	"strings"
+	"time"
+
+	"github.com/nickelsec/bough/internal/agent"
 )
 
 // optionRun matches the options that may sit between git and its subcommand.
@@ -103,23 +105,6 @@ func FirstCommand(s string) string {
 	return s
 }
 
-// NormalisePath puts a file path into a comparable form.
-//
-// The same file turns up written several ways across a session, because the
-// drive letter changes case between records and separators differ by platform.
-// Grouping by path only works once those are settled.
-//
-// This deliberately does not use path/filepath. A transcript written on
-// Windows can be read on any machine, so backslashes have to be understood
-// everywhere rather than only where the host happens to use them.
-func NormalisePath(p string) string {
-	if p == "" {
-		return ""
-	}
-	p = path.Clean(strings.ReplaceAll(p, `\`, "/"))
-	return strings.ToLower(p)
-}
-
 // leadingCD is a command that moves somewhere before doing anything else.
 //
 // A session about one project regularly commits in another: working on a tool
@@ -141,8 +126,68 @@ func CommitDir(cmd string) string {
 	}
 	for _, g := range m[1:] {
 		if g != "" {
-			return NormalisePath(g)
+			return agent.NormalisePath(g)
 		}
 	}
 	return ""
+}
+
+// PendingCommit is a commit command waiting to hear whether it worked.
+//
+// Both sources hold these while a call is outstanding and settle them when the
+// result arrives, keyed by the id of the call that issued them.
+type PendingCommit struct {
+	// Turn is the index of the turn the commit belongs to.
+	Turn int
+
+	// Amend says the command amended rather than created.
+	Amend bool
+
+	// Dir is where it committed, empty for the session's own directory.
+	Dir string
+}
+
+// Extent reports when a set of files was last written and how much they hold.
+//
+// From the files rather than their contents, so listing projects stays cheap
+// on a large history: it says which projects are substantial and when they
+// were last touched, not how many prompts are in them.
+func Extent(files []string) (time.Time, int64) {
+	var last time.Time
+	var size int64
+	for _, fp := range files {
+		info, err := os.Stat(fp)
+		if err != nil {
+			continue
+		}
+		size += info.Size()
+		if info.ModTime().After(last) {
+			last = info.ModTime()
+		}
+	}
+	return last, size
+}
+
+// When reads a transcript timestamp as a time in the reader's own zone.
+//
+// Local time, not UTC. Agents write timestamps with a Z suffix, and time.Parse
+// hands those back in UTC, which is a different calendar day from the one the
+// person was sitting at for a good part of every evening. A prompt typed at
+// 01:57 in Asia/Calcutta is 20:27 the previous day in UTC, and the diagram
+// headed it with yesterday's date.
+//
+// Durations are unaffected either way, so segmenting never noticed. It is the
+// day a piece of work belongs to that was wrong, which is exactly what the
+// reader is looking at.
+func When(stamp string) time.Time {
+	if stamp == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339Nano, stamp)
+	if err != nil {
+		return time.Time{}
+	}
+	//nolint:gosmopolitan // deliberate: the reader's own clock is the right
+	// frame for which day a piece of work belongs to.
+	return t.Local()
 }

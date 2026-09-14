@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/nickelsec/bough/internal/agent"
+	"github.com/nickelsec/bough/internal/pick"
 )
 
 // history writes a small transcript that looks like the real thing.
@@ -151,8 +153,12 @@ func TestMissingHistoryExplainsItself(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error when there is no history")
 	}
-	if !strings.Contains(err.Error(), "no Claude Code history") {
-		t.Errorf("error should say what was looked for, got: %v", err)
+	// The agent and the directory, both from the registry rather than written
+	// out here, so adding an agent does not mean editing this wording.
+	for _, want := range []string{"Claude Code", "~/.claude/projects"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should name %q, got: %v", want, err)
+		}
 	}
 }
 
@@ -191,17 +197,14 @@ func TestWritesToAFile(t *testing.T) {
 }
 
 func TestCurrentProjectComesFirstAndIsMarked(t *testing.T) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
+	const cwd = "/somewhere/here"
 	projects := []agent.Project{
 		{Name: "alpha", Path: "/somewhere/alpha"},
 		{Name: "here", Path: cwd},
 		{Name: "beta", Path: "/somewhere/beta"},
 	}
 
-	ordered, found := currentFirst(projects)
+	ordered, found := currentFirst(projects, cwd)
 	if !found {
 		t.Fatal("the working directory should have matched a project")
 	}
@@ -222,7 +225,7 @@ func TestNoMarkerWhenNotInsideAProject(t *testing.T) {
 		{Name: "alpha", Path: "/nowhere/alpha"},
 		{Name: "beta", Path: "/nowhere/beta"},
 	}
-	ordered, found := currentFirst(projects)
+	ordered, found := currentFirst(projects, "/somewhere/else")
 
 	if found {
 		t.Error("no project should have matched")
@@ -334,4 +337,79 @@ func TestVersionFlagPrints(t *testing.T) {
 	if got := strings.TrimSpace(out.String()); got == "" {
 		t.Error("--version printed nothing")
 	}
+}
+
+// Every agent bough can build is in the registry, and every agent in the
+// registry can be built.
+//
+// The two are separate lists by necessity: the registry lives below the agent
+// packages so the core can read it, and only main can import those packages to
+// construct one. Nothing else makes them agree, and half-registering an agent
+// is quiet in both directions. A source missing from the registry has no
+// display name and no --agent word; a row with no source behind it accepts a
+// flag that then finds nothing.
+func TestEveryAgentIsBothRegisteredAndBuildable(t *testing.T) {
+	built := buildable()
+
+	for _, k := range agent.Agents {
+		if _, ok := built[k.Source]; !ok {
+			t.Errorf("%s is in the registry but nothing can build it", k.Source)
+		}
+		if k.Display == "" || k.Where == "" || len(k.Flag) == 0 {
+			t.Errorf("%s is registered without a name, a place or a flag", k.Source)
+		}
+	}
+
+	for source := range built {
+		if _, ok := agent.Lookup(source); !ok {
+			t.Errorf("%s can be built but is not in the registry", source)
+		}
+	}
+}
+
+// The interactive chooser writes to the streams run was handed, and backing
+// out comes back as a value.
+//
+// It used to reach past them: choose discarded its writer, offer wrote the
+// banner straight to os.Stderr, and cancelling called os.Exit(0), which skips
+// every deferred close on the way out and makes this path impossible to drive
+// from a test at all. That last part is why none of it was covered.
+func TestChoosingWritesToTheGivenStreamsAndCancelsCleanly(t *testing.T) {
+	projects := []agent.Project{
+		{Name: "alpha", Path: "/somewhere/alpha"},
+		{Name: "beta", Path: "/somewhere/beta"},
+	}
+
+	// Empty input: the numbered list reads a line, gets nothing, and treats
+	// that as backing out.
+	var out bytes.Buffer
+	_, err := choose(projects, "", strings.NewReader(""), &out)
+
+	if !errors.Is(err, pick.ErrCancelled) {
+		t.Fatalf("err = %v, want a cancellation", err)
+	}
+	if out.Len() == 0 {
+		t.Error("nothing was written to the writer it was given")
+	}
+	for _, want := range []string{"alpha", "beta", "Which project?"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("the offer did not mention %q:\n%s", want, out.String())
+		}
+	}
+}
+
+// And run turns that cancellation into a clean return rather than an error.
+func TestCancellingIsNotAFailure(t *testing.T) {
+	if err := cancelled(pick.ErrCancelled); err != nil {
+		t.Errorf("cancelling reached the caller as an error: %v", err)
+	}
+}
+
+// cancelled mirrors what run does with the error from choose, so the rule is
+// checked without needing a terminal to cancel in.
+func cancelled(err error) error {
+	if errors.Is(err, pick.ErrCancelled) {
+		return nil
+	}
+	return err
 }

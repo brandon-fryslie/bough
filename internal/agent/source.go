@@ -11,7 +11,12 @@
 // never import an agent implementation. They see Turn and nothing else.
 package agent
 
-import "time"
+import (
+	"path"
+	"regexp"
+	"strings"
+	"time"
+)
 
 // Source is one coding agent that bough can read.
 type Source interface {
@@ -77,33 +82,121 @@ type Session struct {
 	ParentID string
 }
 
+// Known describes one agent bough can read.
+//
+// Everything a reader or a flag needs to say about an agent lives here, in one
+// row per agent. It used to be spelled out in seven places: two Name methods,
+// two Source literals, a Display switch, a copy of that switch in the page, the
+// --agent flag, and the wording of the "no history found" error. Adding an
+// agent meant finding all seven, and the page's copy had already drifted from
+// the switch it was copied from.
+type Known struct {
+	// Source is what the agent's own package calls itself, as it appears on a
+	// Project.
+	Source string
+
+	// Display is the name a person would recognise. "claude-code" is the name
+	// of a source; "Claude Code" is the name of a tool.
+	Display string
+
+	// Flag are the words --agent accepts for this one.
+	Flag []string
+
+	// Where is the directory its history lives in, for saying where bough
+	// looked when it found nothing.
+	Where string
+}
+
+// Agents is every agent bough reads, in the order they were added.
+var Agents = []Known{
+	{
+		Source:  "claude-code",
+		Display: "Claude Code",
+		Flag:    []string{"claude", "claude-code"},
+		Where:   "~/.claude/projects",
+	},
+	{
+		Source:  "codex",
+		Display: "Codex",
+		Flag:    []string{"codex"},
+		Where:   "~/.codex/sessions",
+	},
+}
+
+// Lookup finds an agent by its source name.
+func Lookup(source string) (Known, bool) {
+	for _, k := range Agents {
+		if k.Source == source {
+			return k, true
+		}
+	}
+	return Known{}, false
+}
+
+// ByFlag finds an agent by a word --agent accepts.
+func ByFlag(word string) (Known, bool) {
+	for _, k := range Agents {
+		for _, f := range k.Flag {
+			if f == word {
+				return k, true
+			}
+		}
+	}
+	return Known{}, false
+}
+
 // Display names an agent for a person to read.
 //
-// Source strings are what each agent's package calls itself and are not always
-// what somebody wants to see: "claude-code" is the name of a source, "Claude
-// Code" is the name of a tool. Both views ask here rather than spelling it
-// themselves, so the terminal and the page cannot drift apart.
+// Both views ask here rather than spelling it themselves, so the terminal and
+// the page cannot drift apart. The page is handed this table rather than
+// holding a copy of it.
 //
 // An agent nobody has named yet comes back as it was given, which is better
 // than an empty column.
 func Display(source string) string {
-	switch source {
-	case "claude-code":
-		return "Claude Code"
-	case "codex":
-		return "Codex"
+	if k, ok := Lookup(source); ok {
+		return k.Display
 	}
 	return source
 }
 
 // Delegation is a unit of work the agent handed to a sub-agent.
 type Delegation struct {
-	// Kind is the sort of sub-agent, for example "Explore" or "Plan".
+	// Kind is the sort of sub-agent, for example "Explore" or "Plan". Empty
+	// when the agent does not name a type.
 	Kind string
 
+	// Name is what this particular piece of handed-off work was called, for
+	// example "pixel_art". Empty when the agent does not name it.
+	//
+	// Separate from Kind because they are separate facts and were being put in
+	// the same field. Claude names the type of sub-agent and never the task;
+	// Codex names the task and often not the type. Reading both out of one
+	// string meant every consumer had to know which agent it came from to know
+	// what the word in front of it meant.
+	Name string
+
 	// Description is what the sub-agent was asked to do, in the words used at
-	// the time.
+	// the time. Empty when the brief is unreadable: Codex encrypts it.
 	Description string
+}
+
+// Says returns the best single phrase for a delegation, for a reader who has
+// room for one.
+//
+// The brief is what somebody asked for, so it wins. Failing that the task's
+// own name says what the work was, and the type of sub-agent says only who did
+// it, which is the least informative of the three. Printing Kind alone left a
+// bare "handed off:" with nothing after it on agents that do not set it.
+func (d Delegation) Says() string {
+	switch {
+	case d.Description != "":
+		return d.Description
+	case d.Name != "":
+		return d.Name
+	default:
+		return d.Kind
+	}
 }
 
 // Commit is a commit the agent made while working on a turn.
@@ -192,7 +285,19 @@ func (t *Tokens) Total() int {
 // already been resolved by the time a Turn exists.
 type Turn struct {
 	At   time.Time
-	Text string // what the human typed
+	Text string // what the human typed, empty when nobody typed anything
+
+	// TaskName is what a piece of handed-off work was called, when this turn
+	// is a sub-agent's rather than a person's.
+	//
+	// A sub-agent's rollout has no prompt in it: nobody typed anything, the
+	// work arrived as an instruction from another agent. That used to be
+	// written into Text, first as the task's name and then as the literal
+	// "delegated task" when there was no name, which made a field documented
+	// as the reader's own words hold something no reader ever wrote. A turn
+	// with no prompt now says so by leaving Text empty, and anything with a
+	// line to fill asks Says for the best phrase available.
+	TaskName string
 
 	// Tools counts calls by tool name.
 	Tools map[string]int
@@ -231,3 +336,47 @@ type Turn struct {
 	// compaction. Free evidence, worth more than anything we infer.
 	SegmentHint bool
 }
+
+// Says returns the best phrase describing a turn, for somewhere with room for
+// one line.
+//
+// A prompt is the reader's own words and always wins. A sub-agent's turn has
+// none, so the name of the task it was given stands in. A turn with neither
+// returns empty rather than a stand-in nobody wrote.
+func (t Turn) Says() string {
+	if t.Text != "" {
+		return t.Text
+	}
+	return t.TaskName
+}
+
+// NormalisePath puts a file path into a comparable form.
+//
+// The same file turns up written several ways across a session, because the
+// drive letter changes case between records and separators differ by platform.
+// Grouping by path only works once those are settled.
+//
+// This deliberately does not use path/filepath. A transcript written on
+// Windows can be read on any machine, so backslashes have to be understood
+// everywhere rather than only where the host happens to use them.
+//
+// A Windows drive is folded to the "d:/" spelling whether it arrived that way
+// or as the "/d/" a unix style shell writes. One project's commits arrived as
+// both in the same session, and they are one directory: comparing them without
+// this said the work happened somewhere else and threw it away. There were two
+// normalisers here doing this differently, and the one that did not understand
+// "/d/" was the one the agents called.
+func NormalisePath(p string) string {
+	if p == "" {
+		return ""
+	}
+	p = strings.ToLower(strings.ReplaceAll(p, `\`, "/"))
+	if m := shellDrive.FindStringSubmatch(p); m != nil {
+		p = m[1] + ":/" + m[2]
+	}
+	return path.Clean(p)
+}
+
+// shellDrive matches the "/d/some/path" a unix style shell uses for a Windows
+// drive, so it can be written the way the transcript records it.
+var shellDrive = regexp.MustCompile(`^/([a-z])/(.*)$`)
