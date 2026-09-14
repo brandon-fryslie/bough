@@ -36,6 +36,63 @@
   // it only ever changes the colour and never appears as a figure.
   var HARD = 0.5;
 
+  // A day square is 36 units. Legible means about this many pixels for one,
+  // which keeps a prompt circle near eleven and comfortably clickable.
+  var READABLE = 32 / 36;
+
+  // The other end of the same question. A ceiling on how big a node may be
+  // drawn, not on the scale: an absolute cap means something different on a
+  // small project, where the whole diagram came to forty pixels across in the
+  // middle of a window fourteen hundred wide, geometrically centred and still
+  // reading as lost.
+  var COMFORTABLE = 72 / 36;
+
+  // wholeScale is the largest scale that still shows every day at once.
+  //
+  // seen is the box the drawing occupies, r the room available, spine the
+  // model's spine or null. It lives here rather than in the page because it is
+  // arithmetic over the layout, and the check that guards it can only load
+  // what this file exports: the copy that used to sit in the checker asserted
+  // against its own restatement of these lines.
+  function wholeScale(seen, r, spine) {
+    var s = Math.min(COMFORTABLE, r.h / seen.height, r.w / seen.width);
+
+    // The spine runs past the nodes at both ends, further at the arrow. It is
+    // not centred on, or the work sits off to one side, but it still has to
+    // fit, or the arrow is clipped by the edge of the window.
+    if (spine) {
+      var mid = seen.x + seen.width / 2;
+      var reach = Math.max(mid - (spine.x1 - 13), spine.x2 + 13 - mid) * 2;
+      if (reach > 0) s = Math.min(s, r.w / reach);
+    }
+    return s > 0 ? s : 1;
+  }
+
+  // homeScale is where the view opens: legible, but never larger than showing
+  // the whole thing, since blowing up a two day history helps nobody.
+  function homeScale(seen, r, spine) {
+    var all = wholeScale(seen, r, spine);
+    if (all >= READABLE) return all;
+
+    // Legible, but still bounded by the height. A ribbon may be scrolled
+    // sideways; one taller than the window has nowhere to go.
+    var legible = Math.min(READABLE, Math.max(all, r.h / seen.height));
+
+    // Showing the whole diagram is worth having, but never at the cost of the
+    // nodes being smaller than they need to be. Where the whole thing fits at
+    // the legible scale it is already being shown; where it does not, opening
+    // whole means shrinking below legible, and that is the thing being fixed.
+    //
+    // An earlier version took the whole view whenever it came within a fixed
+    // fraction of legible. That fraction ignored how much bigger the nodes
+    // would actually be, and it produced a diagram that shrank as the window
+    // grew: a twelve day history opened at thirty two pixels on a 1440 screen
+    // and thirty on a 1920 one, because the wider screen brought the whole
+    // view inside the threshold. A larger window must never give smaller
+    // nodes.
+    return Math.max(all, legible);
+  }
+
   function clamp(v, lo, hi) {
     return v < lo ? lo : v > hi ? hi : v;
   }
@@ -215,5 +272,12 @@
     }).filter(Boolean);
   }
 
-  root.BoughLayout = { build: build, HARD: HARD };
+  root.BoughLayout = {
+    build: build,
+    HARD: HARD,
+    READABLE: READABLE,
+    COMFORTABLE: COMFORTABLE,
+    wholeScale: wholeScale,
+    homeScale: homeScale
+  };
 })(typeof module !== "undefined" && module.exports ? module.exports : window);

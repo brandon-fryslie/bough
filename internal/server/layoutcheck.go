@@ -93,24 +93,20 @@ for (const file of files) {
     }
     const cw = seen.x1 - seen.x0, ch = seen.y1 - seen.y0;
 
-    // The ceiling on the opening view, expressed as the size a day square is
-    // allowed to reach rather than as a raw scale. Node sizes come from how
-    // much work a day held, so a short history draws smaller shapes, and a
-    // fixed scale cap left one at forty pixels across in the middle of a
-    // fourteen hundred pixel window: centred, and still reading as lost.
-    const COMFORTABLE = 72 / 36;
-
     for (const box of [{ w: 1200, h: 800 }, { w: 1440, h: 900 }, { w: 900, h: 600 }]) {
       const margin = 40;
       const room = { w: box.w - margin * 2, h: box.h - margin * 2 };
-      let scale = Math.min(COMFORTABLE, room.h / (ch + 30), room.w / cw);
 
-      // Shrink until the spine fits too, so the arrow is never clipped.
-      if (out.spine) {
-        const mid = seen.x0 + cw / 2;
-        const reach = Math.max(mid - (out.spine.x1 - 13), out.spine.x2 + 13 - mid) * 2;
-        if (reach > 0) scale = Math.min(scale, room.w / reach);
-      }
+      // The page's own function, not a restatement of it. This used to hold a
+      // copy of the fit arithmetic and its COMFORTABLE constant, so a change
+      // to the real one left the check asserting against its own stale
+      // version: green, and guarding nothing.
+      const scale = L.wholeScale(
+        { x: seen.x0, y: seen.y0, width: cw, height: ch + 30 },
+        room,
+        out.spine
+      );
+
       check(tag + " fit scale is usable", scale > 0 && isFinite(scale), String(scale));
 
       const vx = (box.w - cw * scale) / 2 - seen.x0 * scale;
@@ -146,20 +142,13 @@ for (const file of files) {
     // and a hundred days drew its day squares at under three pixels, which is
     // a line rather than a diagram. The view opens at a size the nodes can be
     // read at instead, and time becomes something to travel along.
-    const READABLE = 32 / 36;
+    const READABLE = L.READABLE;
     for (const box of [{ w: 1440, h: 900 }, { w: 390, h: 844 }]) {
       const margin = box.w < 560 ? 16 : 40;
       const r = { w: box.w - margin * 2, h: box.h - margin * 2 };
-      let all = Math.min(COMFORTABLE, r.h / (ch + 30), r.w / cw);
-      if (out.spine) {
-        const mid = seen.x0 + cw / 2;
-        const far = Math.max(mid - (out.spine.x1 - 13), out.spine.x2 + 13 - mid) * 2;
-        if (far > 0) all = Math.min(all, r.w / far);
-      }
-      let home = all;
-      if (all < READABLE) {
-        home = Math.max(all, Math.min(READABLE, Math.max(all, r.h / (ch + 30))));
-      }
+      const box_ = { x: seen.x0, y: seen.y0, width: cw, height: ch + 30 };
+      const all = L.wholeScale(box_, r, out.spine);
+      const home = L.homeScale(box_, r, out.spine);
 
       // Whatever the length, the opening view has to be legible.
       check(tag + " opens legibly at " + box.w,
@@ -200,6 +189,20 @@ for (const file of files) {
           "uses " + (uses * 100).toFixed(0) + "% of the room, day square " +
           (36 * home).toFixed(1) + "px");
       }
+
+      // And the same question from the other end. A day square has a size it
+      // must reach and a size it must not pass: blown up, a one day history is
+      // three enormous shapes with nothing to compare them against, which
+      // reads as a mistake rather than as a small amount of work.
+      //
+      // Written as a number for the same reason the floor is. Reading the
+      // ceiling from the constant that produced the scale would make this
+      // agree with whatever that constant says, which is how a change to it
+      // went unnoticed: no fixture was small enough for the ceiling to bind,
+      // and nothing asserted there was a ceiling at all.
+      check(tag + " nodes are not blown up at " + box.w,
+        36 * home <= 96,
+        "day square " + (36 * home).toFixed(1) + "px");
     }
 
     // A wider window must never draw smaller nodes.
@@ -214,17 +217,8 @@ for (const file of files) {
     for (const box of [{ w: 1440, h: 900 }, { w: 1920, h: 1080 }, { w: 2560, h: 1440 }]) {
       const margin = 40;
       const r = { w: box.w - margin * 2, h: box.h - margin * 2 };
-      let all = Math.min(COMFORTABLE, r.h / (ch + 30), r.w / cw);
-      if (out.spine) {
-        const mid = seen.x0 + cw / 2;
-        const far = Math.max(mid - (out.spine.x1 - 13), out.spine.x2 + 13 - mid) * 2;
-        if (far > 0) all = Math.min(all, r.w / far);
-      }
-      if (!(all > 0)) all = 1;
-      let home = all;
-      if (all < READABLE) {
-        home = Math.max(all, Math.min(READABLE, Math.max(all, r.h / (ch + 30))));
-      }
+      const box_ = { x: seen.x0, y: seen.y0, width: cw, height: ch + 30 };
+      const home = L.homeScale(box_, r, out.spine);
 
       check(tag + " a wider window never shrinks the nodes at " + box.w,
         home >= previous - 0.001,

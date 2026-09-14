@@ -53,6 +53,12 @@ func writeGraphs(t *testing.T, dir string) []string {
 		// one, which is the shape that used to shrink as the window grew. The
 		// busy fixture is eight times wider and never comes close.
 		"middling": synthetic(12, 3),
+		// One sitting, one task. Small enough in both directions that the
+		// ceiling on node size is what limits the opening view, rather than
+		// the width or the height of the window. Nothing else here reaches
+		// it: the next smallest is bounded by its height at 1.94 against a
+		// ceiling of 2, so a change to that ceiling went unnoticed.
+		"tiny": synthetic(1, 1),
 	}
 	for name, g := range cases {
 		body, err := json.Marshal(g)
