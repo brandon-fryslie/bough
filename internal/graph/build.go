@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/nickelsec/bough/internal/agent"
+	"github.com/nickelsec/bough/internal/agent/shell"
 	"github.com/nickelsec/bough/internal/metrics"
 	"github.com/nickelsec/bough/internal/repo"
 	"github.com/nickelsec/bough/internal/rollup"
@@ -65,8 +66,9 @@ func Build(p agent.Project, sessions []agent.Session, opt Options) Graph {
 	// A commit made in another repository is not this project's work, whether
 	// or not the repository can be read, so it goes first either way.
 	onlyHere(p.Path, sessions)
+	repoRead := false
 	if !opt.SkipRepo {
-		fromRepo(p.Path, sessions)
+		repoRead = fromRepo(p.Path, sessions)
 	}
 
 	var goals []rollup.Goal
@@ -90,6 +92,7 @@ func Build(p agent.Project, sessions []agent.Session, opt Options) Graph {
 			Path:     p.Path,
 			Agent:    p.Source,
 			Sessions: len(sessions),
+			RepoRead: repoRead,
 		},
 	}
 
@@ -273,9 +276,11 @@ const matchWindow = 90 * time.Second
 //
 // Nothing here is required. A project that has moved, was never a repository,
 // or is on a machine without git leaves the transcript's own account standing.
-func fromRepo(dir string, sessions []agent.Session) {
+// fromRepo fills in what the transcript could not say, and reports whether the
+// repository was actually consulted.
+func fromRepo(dir string, sessions []agent.Session) bool {
 	if dir == "" {
-		return
+		return false
 	}
 	h := repo.Read(dir)
 	// Nothing was consulted, so nothing can be confirmed or contradicted. The
@@ -283,7 +288,7 @@ func fromRepo(dir string, sessions []agent.Session) {
 	// that is known. Clearing them here would empty every hash on a machine
 	// with no git installed.
 	if !h.Read {
-		return
+		return false
 	}
 	// Every commit the agent made, gathered before any of them is matched.
 	//
@@ -311,6 +316,7 @@ func fromRepo(dir string, sessions []agent.Session) {
 		c.SHA = ""
 		c.Branch = ""
 	}
+	return true
 }
 
 // onlyHere drops commits the agent made in some other repository.
@@ -358,7 +364,7 @@ func here(in, project string) bool {
 		if !strings.Contains(in, "..") {
 			return true
 		}
-		return sameDir(path.Join(driveForm(project), in), project)
+		return sameDir(path.Join(shell.NormalisePath(project), in), project)
 	}
 	return sameDir(in, project)
 }
@@ -384,24 +390,8 @@ var driveLetter = regexp.MustCompile(`^[a-zA-Z]:/`)
 // meet, and the result is compared whole rather than by suffix, since a suffix
 // test would make "site" and "my-site" the same place.
 func sameDir(a, b string) bool {
-	return driveForm(a) == driveForm(b)
+	return shell.NormalisePath(a) == shell.NormalisePath(b)
 }
-
-// driveForm puts a path into one shape: lower case, forward slashes, no
-// trailing separator, and a Windows drive written as "d:/" whether it arrived
-// that way or as the "/d/" a shell uses.
-func driveForm(p string) string {
-	p = strings.ToLower(strings.ReplaceAll(p, `\`, "/"))
-	if m := shellDrive.FindStringSubmatch(p); m != nil {
-		p = m[1] + ":/" + m[2]
-	}
-	p = path.Clean(p)
-	return strings.TrimSuffix(p, "/")
-}
-
-// shellDrive matches the "/d/some/path" a unix style shell uses for a Windows
-// drive, so it can be written the way the transcript records it.
-var shellDrive = regexp.MustCompile(`^/([a-z])/(.*)$`)
 
 // pair matches the commits an agent made to the ones in the repository,
 // closest pair first, and returns the ones nothing matched.

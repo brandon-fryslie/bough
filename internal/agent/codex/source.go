@@ -40,6 +40,11 @@ func (s Source) root() (string, error) {
 
 type projectGroup struct {
 	files []string
+
+	// shown is the path as it was written, kept for display. Grouping happens
+	// on the normalised form, which lower cases and folds a Windows drive, and
+	// that is not what anybody wants to read back.
+	shown string
 }
 
 // Detect reports all projects Codex CLI has history for.
@@ -71,12 +76,16 @@ func (s Source) Detect() ([]agent.Project, error) {
 		if cwd == "" {
 			return nil
 		}
-		cwd = filepath.Clean(cwd)
+		// Grouped on the normalised form, the same one every other path
+		// comparison in the tool uses. filepath.Clean only understands the
+		// separator the host happens to use, so the same project written two
+		// ways in one session became two projects.
+		key := shell.NormalisePath(cwd)
 
-		g := byPath[cwd]
+		g := byPath[key]
 		if g == nil {
-			g = &projectGroup{}
-			byPath[cwd] = g
+			g = &projectGroup{shown: filepath.Clean(cwd)}
+			byPath[key] = g
 		}
 		g.files = append(g.files, p)
 		return nil
@@ -86,7 +95,8 @@ func (s Source) Detect() ([]agent.Project, error) {
 	}
 
 	var projects []agent.Project
-	for pPath, g := range byPath {
+	for _, g := range byPath {
+		pPath := g.shown
 		refJSON, err := json.Marshal(g.files)
 		if err != nil {
 			continue

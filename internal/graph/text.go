@@ -30,8 +30,18 @@ func WriteText(w io.Writer, g Graph, verbose bool) error {
 	}
 	// Only when there were any. A project that commits nothing does not need
 	// telling so every time it is read.
+	//
+	// A hash means two different things depending on whether the repository was
+	// consulted, so a reading that could not consult it says so. Otherwise "not
+	// a git repository", "git is not installed" and --no-repo all look the same
+	// as a clean confirmation, and every hash shown is a claim nothing checked.
 	if n := len(t.Commits); n > 0 {
-		fmt.Fprintf(w, "%s\n", plural(n, "commit"))
+		if p.RepoRead {
+			fmt.Fprintf(w, "%s\n", plural(n, "commit"))
+		} else {
+			fmt.Fprintf(w, "%s, as the transcript recorded them: the repository was not read\n",
+				plural(n, "commit"))
+		}
 	}
 	// Most of what a project costs is the model re-reading the conversation
 	// rather than writing anything, which is worth saying once.

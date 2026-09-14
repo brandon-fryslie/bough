@@ -10,7 +10,6 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -21,6 +20,7 @@ import (
 	"github.com/nickelsec/bough/internal/agent"
 	"github.com/nickelsec/bough/internal/agent/claude"
 	"github.com/nickelsec/bough/internal/agent/codex"
+	"github.com/nickelsec/bough/internal/agent/shell"
 	"github.com/nickelsec/bough/internal/banner"
 	"github.com/nickelsec/bough/internal/graph"
 	"github.com/nickelsec/bough/internal/pick"
@@ -333,10 +333,10 @@ func currentFirst(projects []agent.Project) ([]agent.Project, bool) {
 	if err != nil {
 		return projects, false
 	}
-	want := strings.ToLower(filepath.Clean(cwd))
+	want := shell.NormalisePath(cwd)
 
 	for i, p := range projects {
-		if strings.ToLower(filepath.Clean(p.Path)) != want {
+		if shell.NormalisePath(p.Path) != want {
 			continue
 		}
 		ordered := make([]agent.Project, 0, len(projects))
@@ -401,9 +401,13 @@ func ago(t time.Time) string {
 // byPath matches a project by its working directory, allowing for the drive
 // letter case drifting between records on Windows.
 func byPath(projects []agent.Project, path string) (agent.Project, bool) {
-	want := strings.ToLower(filepath.Clean(path))
+	// The same normaliser the rest of the tool compares paths with. This used
+	// filepath.Clean, which only understands the separator the host happens to
+	// use, so a transcript written on Windows and read anywhere else compared
+	// as a different place.
+	want := shell.NormalisePath(path)
 	for _, p := range projects {
-		if strings.ToLower(filepath.Clean(p.Path)) == want {
+		if shell.NormalisePath(p.Path) == want {
 			return p, true
 		}
 	}

@@ -146,3 +146,40 @@ func TestHeredocGuardIsLoadBearing(t *testing.T) {
 		t.Error("a commit inside written text was counted")
 	}
 }
+
+// The two spellings of a Windows drive are one place.
+//
+// A unix style shell writes "/d/work/site" where the transcript elsewhere says
+// "d:/work/site", and one project's commits arrived as both inside a single
+// session. There were two normalisers in the tree doing this differently, and
+// the one the agents called did not fold the drive at all, so the same
+// directory compared as two and real work was thrown away as belonging
+// somewhere else.
+func TestNormalisePathFoldsBothDriveSpellings(t *testing.T) {
+	want := "d:/work/site"
+	for _, in := range []string{
+		"d:/work/site",
+		"/d/work/site",
+		`D:\work\site`,
+		"D:/Work/Site/",
+		"d:/work/./site",
+	} {
+		if got := NormalisePath(in); got != want {
+			t.Errorf("NormalisePath(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// A relative path stays relative. Only an absolute one says where it starts.
+func TestNormalisePathLeavesRelativePathsAlone(t *testing.T) {
+	for in, want := range map[string]string{
+		"internal":     "internal",
+		"./internal":   "internal",
+		"internal/foo": "internal/foo",
+		"":             "",
+	} {
+		if got := NormalisePath(in); got != want {
+			t.Errorf("NormalisePath(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
