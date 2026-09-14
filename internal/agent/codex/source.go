@@ -80,7 +80,7 @@ func (s Source) Detect() ([]agent.Project, error) {
 		// comparison in the tool uses. filepath.Clean only understands the
 		// separator the host happens to use, so the same project written two
 		// ways in one session became two projects.
-		key := shell.NormalisePath(cwd)
+		key := agent.NormalisePath(cwd)
 
 		g := byPath[key]
 		if g == nil {

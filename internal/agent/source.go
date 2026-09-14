@@ -11,7 +11,12 @@
 // never import an agent implementation. They see Turn and nothing else.
 package agent
 
-import "time"
+import (
+	"path"
+	"regexp"
+	"strings"
+	"time"
+)
 
 // Source is one coding agent that bough can read.
 type Source interface {
@@ -285,3 +290,34 @@ func (t Turn) Says() string {
 	}
 	return t.TaskName
 }
+
+// NormalisePath puts a file path into a comparable form.
+//
+// The same file turns up written several ways across a session, because the
+// drive letter changes case between records and separators differ by platform.
+// Grouping by path only works once those are settled.
+//
+// This deliberately does not use path/filepath. A transcript written on
+// Windows can be read on any machine, so backslashes have to be understood
+// everywhere rather than only where the host happens to use them.
+//
+// A Windows drive is folded to the "d:/" spelling whether it arrived that way
+// or as the "/d/" a unix style shell writes. One project's commits arrived as
+// both in the same session, and they are one directory: comparing them without
+// this said the work happened somewhere else and threw it away. There were two
+// normalisers here doing this differently, and the one that did not understand
+// "/d/" was the one the agents called.
+func NormalisePath(p string) string {
+	if p == "" {
+		return ""
+	}
+	p = strings.ToLower(strings.ReplaceAll(p, `\`, "/"))
+	if m := shellDrive.FindStringSubmatch(p); m != nil {
+		p = m[1] + ":/" + m[2]
+	}
+	return path.Clean(p)
+}
+
+// shellDrive matches the "/d/some/path" a unix style shell uses for a Windows
+// drive, so it can be written the way the transcript records it.
+var shellDrive = regexp.MustCompile(`^/([a-z])/(.*)$`)

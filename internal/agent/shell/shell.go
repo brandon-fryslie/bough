@@ -13,10 +13,10 @@ package shell
 
 import (
 	"os"
-	"path"
 	"regexp"
-	"strings"
 	"time"
+
+	"github.com/nickelsec/bough/internal/agent"
 )
 
 // optionRun matches the options that may sit between git and its subcommand.
@@ -105,37 +105,6 @@ func FirstCommand(s string) string {
 	return s
 }
 
-// NormalisePath puts a file path into a comparable form.
-//
-// The same file turns up written several ways across a session, because the
-// drive letter changes case between records and separators differ by platform.
-// Grouping by path only works once those are settled.
-//
-// This deliberately does not use path/filepath. A transcript written on
-// Windows can be read on any machine, so backslashes have to be understood
-// everywhere rather than only where the host happens to use them.
-//
-// A Windows drive is folded to the "d:/" spelling whether it arrived that way
-// or as the "/d/" a unix style shell writes. One project's commits arrived as
-// both in the same session, and they are one directory: comparing them without
-// this said the work happened somewhere else and threw it away. There were two
-// normalisers here doing this differently, and the one that did not understand
-// "/d/" was the one the agents called.
-func NormalisePath(p string) string {
-	if p == "" {
-		return ""
-	}
-	p = strings.ToLower(strings.ReplaceAll(p, `\`, "/"))
-	if m := shellDrive.FindStringSubmatch(p); m != nil {
-		p = m[1] + ":/" + m[2]
-	}
-	return path.Clean(p)
-}
-
-// shellDrive matches the "/d/some/path" a unix style shell uses for a Windows
-// drive, so it can be written the way the transcript records it.
-var shellDrive = regexp.MustCompile(`^/([a-z])/(.*)$`)
-
 // leadingCD is a command that moves somewhere before doing anything else.
 //
 // A session about one project regularly commits in another: working on a tool
@@ -157,7 +126,7 @@ func CommitDir(cmd string) string {
 	}
 	for _, g := range m[1:] {
 		if g != "" {
-			return NormalisePath(g)
+			return agent.NormalisePath(g)
 		}
 	}
 	return ""

@@ -20,7 +20,6 @@ import (
 	"github.com/nickelsec/bough/internal/agent"
 	"github.com/nickelsec/bough/internal/agent/claude"
 	"github.com/nickelsec/bough/internal/agent/codex"
-	"github.com/nickelsec/bough/internal/agent/shell"
 	"github.com/nickelsec/bough/internal/banner"
 	"github.com/nickelsec/bough/internal/graph"
 	"github.com/nickelsec/bough/internal/pick"
@@ -333,10 +332,10 @@ func currentFirst(projects []agent.Project) ([]agent.Project, bool) {
 	if err != nil {
 		return projects, false
 	}
-	want := shell.NormalisePath(cwd)
+	want := agent.NormalisePath(cwd)
 
 	for i, p := range projects {
-		if shell.NormalisePath(p.Path) != want {
+		if agent.NormalisePath(p.Path) != want {
 			continue
 		}
 		ordered := make([]agent.Project, 0, len(projects))
@@ -405,9 +404,9 @@ func byPath(projects []agent.Project, path string) (agent.Project, bool) {
 	// filepath.Clean, which only understands the separator the host happens to
 	// use, so a transcript written on Windows and read anywhere else compared
 	// as a different place.
-	want := shell.NormalisePath(path)
+	want := agent.NormalisePath(path)
 	for _, p := range projects {
-		if shell.NormalisePath(p.Path) == want {
+		if agent.NormalisePath(p.Path) == want {
 			return p, true
 		}
 	}

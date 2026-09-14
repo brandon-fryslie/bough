@@ -188,7 +188,7 @@ func ExtractTurns(recs []*Record) []agent.Turn {
 						Dir:   shell.CommitDir(in.Command),
 					}
 				}
-				p := shell.NormalisePath(in.path())
+				p := agent.NormalisePath(in.path())
 				if p == "" {
 					continue
 				}

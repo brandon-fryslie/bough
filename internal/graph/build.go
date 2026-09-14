@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/nickelsec/bough/internal/agent"
-	"github.com/nickelsec/bough/internal/agent/shell"
 	"github.com/nickelsec/bough/internal/metrics"
 	"github.com/nickelsec/bough/internal/repo"
 	"github.com/nickelsec/bough/internal/rollup"
@@ -364,7 +363,7 @@ func here(in, project string) bool {
 		if !strings.Contains(in, "..") {
 			return true
 		}
-		return sameDir(path.Join(shell.NormalisePath(project), in), project)
+		return sameDir(path.Join(agent.NormalisePath(project), in), project)
 	}
 	return sameDir(in, project)
 }
@@ -390,7 +389,7 @@ var driveLetter = regexp.MustCompile(`^[a-zA-Z]:/`)
 // meet, and the result is compared whole rather than by suffix, since a suffix
 // test would make "site" and "my-site" the same place.
 func sameDir(a, b string) bool {
-	return shell.NormalisePath(a) == shell.NormalisePath(b)
+	return agent.NormalisePath(a) == agent.NormalisePath(b)
 }
 
 // pair matches the commits an agent made to the ones in the repository,

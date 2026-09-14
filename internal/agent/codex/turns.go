@@ -234,7 +234,7 @@ func applyPatch(cur *agent.Turn, input string) {
 	}
 
 	for i, m := range at {
-		file := shell.NormalisePath(strings.TrimSpace(input[m[2]:m[3]]))
+		file := agent.NormalisePath(strings.TrimSpace(input[m[2]:m[3]]))
 		if file == "" {
 			continue
 		}
@@ -278,7 +278,7 @@ func handleExec(input, callID string, turnIdx int, pending map[string]shell.Pend
 	workdirMatch := execWorkdirRegex.FindStringSubmatch(input)
 	workdir := ""
 	if len(workdirMatch) > 1 {
-		workdir = shell.NormalisePath(strings.ReplaceAll(workdirMatch[1], `\"`, `"`))
+		workdir = agent.NormalisePath(strings.ReplaceAll(workdirMatch[1], `\"`, `"`))
 	}
 
 	if shell.IsCommit(cmd) {
@@ -313,9 +313,9 @@ func handleCommand(args json.RawMessage, callID string, turnIdx int, pending map
 	if cmd == "" {
 		cmd = parsed.Command
 	}
-	cwd := shell.NormalisePath(parsed.Workdir)
+	cwd := agent.NormalisePath(parsed.Workdir)
 	if cwd == "" {
-		cwd = shell.NormalisePath(parsed.Cwd)
+		cwd = agent.NormalisePath(parsed.Cwd)
 	}
 
 	if shell.IsCommit(cmd) {
