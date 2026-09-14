@@ -104,3 +104,24 @@ func TestReadAgainstARealRepository(t *testing.T) {
 func writeFile(dir, name, body string) error {
 	return os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600)
 }
+
+// A history says whether the repository was actually consulted.
+//
+// An empty repository and a machine with no git installed both come back with
+// no commits, and they mean different things. A hash the transcript carried is
+// a claim: when the repository was read and cannot find it, the hash is stale
+// and showing it offers the reader something to check that does not check out.
+// When the repository was never read, the same hash is simply unconfirmed, and
+// clearing it would empty every hash on a machine without git.
+func TestHistorySaysWhetherItWasRead(t *testing.T) {
+	if h := Read(""); h.Read {
+		t.Error("an empty path reported that it read a repository")
+	}
+	if h := Read(filepath.Join(t.TempDir(), "nothing-here")); h.Read {
+		t.Error("a missing directory reported that it read a repository")
+	}
+	// A real repository, which is the case that has to come back true.
+	if h := Read("."); !h.Read {
+		t.Skip("no git available, so there is nothing to compare against")
+	}
+}

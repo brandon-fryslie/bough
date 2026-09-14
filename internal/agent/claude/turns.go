@@ -70,15 +70,15 @@ func (t toolInput) path() string {
 	}
 }
 
-// editingTools are the tools that change a file rather than just reading it.
-// Repeated edits to one file are the clearest sign of a struggle, so they are
-// tracked apart from reads.
 // delegatingTools hand work to a sub-agent.
 var delegatingTools = map[string]bool{
 	"Task":  true,
 	"Agent": true,
 }
 
+// editingTools are the tools that change a file rather than just reading it.
+// Repeated edits to one file are the clearest sign of a struggle, so they are
+// tracked apart from reads.
 var editingTools = map[string]bool{
 	"Edit":         true,
 	"Write":        true,

@@ -193,14 +193,7 @@ func statsOf(turns []agent.Turn) Stats {
 		out.TopFiles = append(out.TopFiles, FileCount{Path: f.Path, Edits: f.Edits})
 	}
 	for _, c := range s.Commits {
-		out.Commits = append(out.Commits, Commit{
-			SHA:     c.SHA,
-			Kind:    c.Kind,
-			Branch:  c.Branch,
-			Subject: c.Subject,
-			Added:   c.Added,
-			Removed: c.Removed,
-		})
+		out.Commits = append(out.Commits, commitOf(c))
 	}
 	return out
 }
@@ -225,14 +218,7 @@ func turnsOf(turns []agent.Turn) []Turn {
 			row.Delegated = append(row.Delegated, Delegation{Kind: d.Kind, Description: d.Description})
 		}
 		for _, c := range t.Committed {
-			row.Committed = append(row.Committed, Commit{
-				SHA:     c.SHA,
-				Kind:    c.Kind,
-				Branch:  c.Branch,
-				Subject: c.Subject,
-				Added:   c.Added,
-				Removed: c.Removed,
-			})
+			row.Committed = append(row.Committed, commitOf(c))
 		}
 		out = append(out, row)
 	}
@@ -292,7 +278,11 @@ func fromRepo(dir string, sessions []agent.Session) {
 		return
 	}
 	h := repo.Read(dir)
-	if len(h.Commits) == 0 {
+	// Nothing was consulted, so nothing can be confirmed or contradicted. The
+	// hashes the transcript carried stay as they are: unverified, but the best
+	// that is known. Clearing them here would empty every hash on a machine
+	// with no git installed.
+	if !h.Read {
 		return
 	}
 	// Every commit the agent made, gathered before any of them is matched.
@@ -486,4 +476,19 @@ func pair(made []*agent.Commit, have []repo.Commit, window time.Duration) []*age
 		}
 	}
 	return missed
+}
+
+// commitOf copies a commit across the boundary into the shape the output uses.
+//
+// Written out twice before, once for a task's list and once for a prompt's, so
+// a field added to one arrived in the graph from one place and not the other.
+func commitOf(c agent.Commit) Commit {
+	return Commit{
+		SHA:     c.SHA,
+		Kind:    c.Kind,
+		Branch:  c.Branch,
+		Subject: c.Subject,
+		Added:   c.Added,
+		Removed: c.Removed,
+	}
 }

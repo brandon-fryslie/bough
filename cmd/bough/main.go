@@ -429,6 +429,12 @@ func writeList(w io.Writer, sources map[string]agent.Source, projects []agent.Pr
 		agent   string
 		path    string
 		prompts int
+
+		// unread means the history could not be read, which is a different
+		// thing from a project with no prompts in it. Both used to print as
+		// "0 prompts", so a permission problem or a corrupt file read as an
+		// empty project and there was nothing to say otherwise.
+		unread bool
 	}
 
 	rows := make([]row, 0, len(projects))
@@ -436,13 +442,17 @@ func writeList(w io.Writer, sources map[string]agent.Source, projects []agent.Pr
 	for _, p := range projects {
 		src := sources[p.Source]
 		turns := 0
+		unread := false
 		if src != nil {
-			sessions, _ := src.Sessions(p)
+			sessions, err := src.Sessions(p)
+			if err != nil {
+				unread = true
+			}
 			for _, s := range sessions {
 				turns += len(s.Turns)
 			}
 		}
-		r := row{name: p.Name, path: p.Path, prompts: turns}
+		r := row{name: p.Name, path: p.Path, prompts: turns, unread: unread}
 		if p.Source != "" {
 			r.agent = "[" + agent.Display(p.Source) + "]"
 		}
@@ -462,8 +472,19 @@ func writeList(w io.Writer, sources map[string]agent.Source, projects []agent.Pr
 	}
 
 	for _, r := range rows {
-		fmt.Fprintf(w, "%-*s  %-*s  %-*s  %d prompts\n",
-			nameW, r.name, agentW, r.agent, pathW, r.path, r.prompts)
+		// A history that failed to read says so rather than reporting a
+		// number. The count came from a discarded error, so a project whose
+		// transcripts could not be opened printed "0 prompts" exactly as an
+		// empty one does, and nothing said which of the two it was.
+		count := fmt.Sprintf("%d prompts", r.prompts)
+		switch {
+		case r.unread && r.prompts > 0:
+			count = fmt.Sprintf("%d prompts, some could not be read", r.prompts)
+		case r.unread:
+			count = "could not be read"
+		}
+		fmt.Fprintf(w, "%-*s  %-*s  %-*s  %s\n",
+			nameW, r.name, agentW, r.agent, pathW, r.path, count)
 	}
 	return nil
 }

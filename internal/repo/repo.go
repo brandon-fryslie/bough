@@ -39,6 +39,12 @@ type Commit struct {
 // History is a project's commits, newest first.
 type History struct {
 	Commits []Commit
+
+	// Read says the repository was actually consulted. A history with no
+	// commits in it is ambiguous otherwise: an empty repository and a machine
+	// without git look identical, and they mean different things for a hash
+	// the transcript carried.
+	Read bool
 }
 
 // Read returns the commit history of the repository at dir.
@@ -47,6 +53,12 @@ type History struct {
 // not installed all return an empty history and no error. None of those are
 // problems the user needs telling about: they only mean the drawing keeps to
 // what the transcript knew.
+//
+// They do change what a hash means, though, which is why History says whether
+// it managed to read anything. A hash the transcript carried is a claim until
+// the repository confirms it; when the repository was never read, that claim
+// stands unchecked, and clearing the ones it cannot find would throw away
+// every hash on a machine with no git installed.
 func Read(dir string) History {
 	if dir == "" {
 		return History{}
@@ -64,7 +76,7 @@ func Read(dir string) History {
 	if err != nil {
 		return History{}
 	}
-	return History{Commits: parseLog(out)}
+	return History{Commits: parseLog(out), Read: true}
 }
 
 // parseLog turns git's output into commits.
