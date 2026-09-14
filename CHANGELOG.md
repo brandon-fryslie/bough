@@ -7,6 +7,39 @@ Notable changes, newest first. Format follows
 
 Nothing yet.
 
+## 0.4.4 - 2026-09-15
+
+The rest of [@brandon-fryslie](https://github.com/brandon-fryslie)'s review.
+Mostly structure, and it should draw exactly what 0.4.3 drew: same diagram,
+same numbers.
+
+### Changed
+
+- **The JSON schema is now 2.** A delegation's task name moved from `kind` to
+  `name`. The two were one field holding different things depending on the
+  agent: Claude names the sort of sub-agent, Codex names the task. A reader
+  that took `kind` as the task name will find it empty on Codex. Nothing else
+  in the output moved.
+
+- A turn with no prompt says so. A sub-agent's work carried the task name in
+  the prompt field, and the words "delegated task" where there was no name.
+  Nobody typed either. The prompt is empty now and the name has its own field.
+
+- The terminal says when the repository was not read. A commit hash means one
+  thing when git confirmed it and another when nothing checked, and
+  `--no-repo`, a directory that is not a repository, and a machine without git
+  all looked the same as a clean confirmation.
+
+### Fixed
+
+- Commits made in a subdirectory, as `cd internal && git commit`, were kept in
+  0.4.3 but only where the project path was written one particular way. Paths
+  from transcripts are now compared in a single form, so the two spellings of
+  a Windows drive are one place.
+
+- Backing out of the project list no longer skips the tool's own cleanup on
+  the way out.
+
 ## 0.4.3 - 2026-09-15
 
 Codex token counts were roughly double. Everything here comes from a careful
