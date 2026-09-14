@@ -60,8 +60,9 @@ func TestUsageIsNotCountedTwice(t *testing.T) {
 	if len(turns) != 1 {
 		t.Fatalf("got %d turns, want 1", len(turns))
 	}
-	if got := turns[0].Tokens.Input; got != 100 {
-		t.Errorf("input = %d, want 100: the two streams report the same response", got)
+	// 60 fresh out of the 100 the record reports, the other 40 being cached.
+	if got := turns[0].Tokens.Input; got != 60 {
+		t.Errorf("input = %d, want 60: the two streams report the same response", got)
 	}
 	if got := turns[0].Tokens.Output; got != 7 {
 		t.Errorf("output = %d, want 7", got)
@@ -79,8 +80,13 @@ func TestLegacyUsageStillCounts(t *testing.T) {
 	if len(turns) != 1 {
 		t.Fatalf("got %d turns, want 1", len(turns))
 	}
-	if got := turns[0].Tokens.Input; got != 55 {
-		t.Errorf("input = %d, want 55: a session with no usage records must fall back", got)
+	// 50 rather than the 55 the record says, because 5 of those are the cached
+	// part and Input means the fresh remainder.
+	if got := turns[0].Tokens.Input; got != 50 {
+		t.Errorf("input = %d, want 50: a session with no usage records must fall back", got)
+	}
+	if got := turns[0].Tokens.CacheRead; got != 5 {
+		t.Errorf("cacheRead = %d, want 5", got)
 	}
 }
 
@@ -241,4 +247,102 @@ func quoteJSON(s string) string {
 	}
 	b.WriteByte('"')
 	return b.String()
+}
+
+// Codex reports the cached tokens as part of the input, not beside it.
+//
+// agent.Tokens means something different: its four fields are disjoint and
+// Total adds them up, so Input has to be the fresh remainder. Reading Codex's
+// two numbers straight into those two fields counted the cache twice. On one
+// real project that turned 1.59M tokens into 3.04M, a 91% overstatement, and
+// it fed everything downstream that reads a token count.
+//
+// The fixture that should have caught this could not: it held 200 input
+// against 1500 cached, which cannot happen, and the arithmetic looks the same
+// either way when the numbers are impossible.
+func TestCachedInputIsNotCountedTwice(t *testing.T) {
+	// Taken from a real rollout: the total confirms input already holds cache.
+	recs := []*Record{
+		userMessage("m1", "go"),
+		raw("token_usage_record", `{"response_id":"r1","usage":{"input_tokens":28739,"cached_input_tokens":28032,"output_tokens":11}}`),
+	}
+
+	turns := ExtractTurns(recs)
+	if len(turns) != 1 {
+		t.Fatalf("got %d turns, want 1", len(turns))
+	}
+	tok := turns[0].Tokens
+
+	if tok.Input != 707 {
+		t.Errorf("input = %d, want 707: the fresh part is what is left after the cache", tok.Input)
+	}
+	if tok.CacheRead != 28032 {
+		t.Errorf("cacheRead = %d, want 28032", tok.CacheRead)
+	}
+	// The record's own total_tokens is 28750, which is input plus output. The
+	// sum of the parts has to agree with it.
+	if got := tok.Total(); got != 28750 {
+		t.Errorf("total = %d, want 28750 to match the record's own total_tokens", got)
+	}
+}
+
+// A record that disagrees with itself must not produce a negative count.
+func TestMoreCacheThanInputDoesNotGoNegative(t *testing.T) {
+	recs := []*Record{
+		userMessage("m1", "go"),
+		raw("token_usage_record", `{"response_id":"r1","usage":{"input_tokens":10,"cached_input_tokens":99,"output_tokens":1}}`),
+	}
+	turns := ExtractTurns(recs)
+	if len(turns) != 1 {
+		t.Fatalf("got %d turns, want 1", len(turns))
+	}
+	if got := turns[0].Tokens.Input; got != 0 {
+		t.Errorf("input = %d, want 0 rather than a negative count", got)
+	}
+}
+
+// A commit is settled by its own call's result, not by whatever finishes next.
+//
+// Codex issues tool calls in parallel and the results come back interleaved.
+// With a single outstanding slot, the first output to arrive decided the
+// commit: here an unrelated command fails first, and a real commit was thrown
+// away on that command's exit code. Claude has always paired by id; this is
+// the same rule.
+func TestCommitIsSettledByItsOwnCall(t *testing.T) {
+	recs := []*Record{
+		userMessage("m1", "commit it"),
+		raw("response_item", `{"type":"function_call","id":"f1","call_id":"c1","name":"exec_command","arguments":"{\"cmd\":\"git commit -m x\",\"workdir\":\"/w\"}"}`),
+		raw("response_item", `{"type":"function_call","id":"f2","call_id":"c2","name":"exec_command","arguments":"{\"cmd\":\"go test ./...\",\"workdir\":\"/w\"}"}`),
+		// The unrelated command fails, and its failure arrives first.
+		raw("response_item", `{"type":"function_call_output","call_id":"c2","output":"Process exited with code 1\nFAIL"}`),
+		raw("response_item", `{"type":"function_call_output","call_id":"c1","output":"Process exited with code 0\n[main abc1234] x"}`),
+	}
+
+	turns := ExtractTurns(recs)
+	if len(turns) != 1 {
+		t.Fatalf("got %d turns, want 1", len(turns))
+	}
+	got := turns[0].Committed
+	if len(got) != 1 {
+		t.Fatalf("got %d commits, want 1: the failing command settled the commit", len(got))
+	}
+	if got[0].SHA != "abc1234" {
+		t.Errorf("sha = %q, want abc1234 from the commit's own output", got[0].SHA)
+	}
+}
+
+// A failed commit whose own result says so is still not a commit.
+func TestFailedCommitIsNotCounted(t *testing.T) {
+	recs := []*Record{
+		userMessage("m1", "commit it"),
+		raw("response_item", `{"type":"function_call","id":"f1","call_id":"c1","name":"exec_command","arguments":"{\"cmd\":\"git commit -m x\",\"workdir\":\"/w\"}"}`),
+		raw("response_item", `{"type":"function_call_output","call_id":"c1","output":"Process exited with code 1\nnothing to commit"}`),
+	}
+	turns := ExtractTurns(recs)
+	if len(turns) != 1 {
+		t.Fatalf("got %d turns, want 1", len(turns))
+	}
+	if n := len(turns[0].Committed); n != 0 {
+		t.Errorf("got %d commits, want 0: the commit was refused", n)
+	}
 }

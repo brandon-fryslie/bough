@@ -17,26 +17,6 @@ var patchFileRegex = regexp.MustCompile(`(?m)^\*\*\*\s*(?:Add|Update|Delete)\s*F
 var execCmdRegex = regexp.MustCompile(`cmd:\s*"((?:\\.|[^"\\])*)"`)
 var execWorkdirRegex = regexp.MustCompile(`workdir:\s*"((?:\\.|[^"\\])*)"`)
 
-// leadingCD picks the directory out of a "cd somewhere && git commit" run.
-//
-// Codex records the command it ran but not always the directory it ran in, so
-// where the command changes directory first that is the better answer than the
-// session's working directory.
-var leadingCD = regexp.MustCompile(`^\s*cd\s+(?:"([^"]*)"|'([^']*)'|([^\s;&|]+))`)
-
-func commitDir(cmd string) string {
-	m := leadingCD.FindStringSubmatch(cmd)
-	if m == nil {
-		return ""
-	}
-	for _, g := range m[1:] {
-		if g != "" {
-			return shell.NormalisePath(g)
-		}
-	}
-	return ""
-}
-
 type pendingCommit struct {
 	turn  int
 	amend bool
@@ -49,7 +29,13 @@ func ExtractTurns(recs []*Record) []agent.Turn {
 	var turns []agent.Turn
 	var cur *agent.Turn
 	var currentModel string
-	var pending *pendingCommit
+	// Keyed by the call id the commit was issued under, the way the Claude
+	// source already does it. A single slot settled on the next tool output
+	// credited a commit to whatever finished next: with parallel calls the
+	// exit code of an unrelated command decided whether the commit counted,
+	// a second commit issued before the first result replaced it, and a
+	// result arriving after the next prompt was lost entirely.
+	pending := map[string]pendingCommit{}
 
 	seenItems := make(map[string]bool)
 	seenUsage := make(map[string]bool)
@@ -101,7 +87,7 @@ func ExtractTurns(recs []*Record) []agent.Turn {
 				Models: map[string]int{},
 			})
 			cur = &turns[len(turns)-1]
-			pending = nil
+			clear(pending)
 			continue
 		}
 
@@ -128,9 +114,9 @@ func ExtractTurns(recs []*Record) []agent.Turn {
 
 			switch item.Type {
 			case "function_call", "custom_tool_call":
-				handleToolCall(cur, &item, len(turns)-1, &pending)
+				handleToolCall(cur, &item, len(turns)-1, pending)
 			case "function_call_output", "custom_tool_call_output":
-				handleToolOutput(cur, &item, r.Time(), turns, &pending)
+				handleToolOutput(cur, &item, r.Time(), turns, pending)
 			}
 		}
 	}
@@ -192,7 +178,23 @@ func handleTokenCount(cur *agent.Turn, r *Record, currentModel string, seen map[
 		seen[id] = true
 	}
 
-	cur.Tokens.Input += usage.InputTokens
+	// Codex's input_tokens is the whole input, cached part included, which is
+	// not what agent.Tokens means by Input: there the four fields are disjoint
+	// and Total adds them up. Adding both fields as they arrive counted the
+	// cached tokens twice and roughly doubled every Codex figure. One real
+	// record read 28,739 input against 28,032 cached with a total of 28,750,
+	// so the cache is 97% of the input rather than something beside it.
+	//
+	// Claude's API reports these already separated, which is the shape the
+	// core expects, so the subtraction happens here rather than the meaning
+	// changing for everyone.
+	fresh := usage.InputTokens - usage.CachedInputTokens
+	if fresh < 0 {
+		// Only reachable if a record disagrees with itself. Trusting the
+		// smaller number keeps the total honest rather than negative.
+		fresh = 0
+	}
+	cur.Tokens.Input += fresh
 	cur.Tokens.CacheRead += usage.CachedInputTokens
 	cur.Tokens.Output += usage.OutputTokens
 	if currentModel != "" && usage.OutputTokens > 0 {
@@ -200,16 +202,16 @@ func handleTokenCount(cur *agent.Turn, r *Record, currentModel string, seen map[
 	}
 }
 
-func handleToolCall(cur *agent.Turn, item *ResponseItem, turnIdx int, pending **pendingCommit) {
+func handleToolCall(cur *agent.Turn, item *ResponseItem, turnIdx int, pending map[string]pendingCommit) {
 	cur.Tools[item.Name]++
 
 	switch item.Name {
 	case "apply_patch":
 		applyPatch(cur, item.Input)
 	case "exec":
-		handleExec(item.Input, turnIdx, pending)
+		handleExec(item.Input, item.CallID, turnIdx, pending)
 	case "exec_command", "shell_command":
-		handleCommand(item.Arguments, turnIdx, pending)
+		handleCommand(item.Arguments, item.CallID, turnIdx, pending)
 	case "spawn_agent":
 		handleSpawnAgent(cur, item.Arguments)
 	}
@@ -268,7 +270,7 @@ func changed(hunk string) int {
 	return n
 }
 
-func handleExec(input string, turnIdx int, pending **pendingCommit) {
+func handleExec(input, callID string, turnIdx int, pending map[string]pendingCommit) {
 	cmdMatch := execCmdRegex.FindStringSubmatch(input)
 	cmd := ""
 	if len(cmdMatch) > 1 {
@@ -281,11 +283,11 @@ func handleExec(input string, turnIdx int, pending **pendingCommit) {
 	}
 
 	if shell.IsCommit(cmd) {
-		cDir := commitDir(cmd)
+		cDir := shell.CommitDir(cmd)
 		if cDir == "" {
 			cDir = workdir
 		}
-		*pending = &pendingCommit{
+		pending[callID] = pendingCommit{
 			turn:  turnIdx,
 			amend: shell.IsAmend(cmd),
 			dir:   cDir,
@@ -293,7 +295,7 @@ func handleExec(input string, turnIdx int, pending **pendingCommit) {
 	}
 }
 
-func handleCommand(args json.RawMessage, turnIdx int, pending **pendingCommit) {
+func handleCommand(args json.RawMessage, callID string, turnIdx int, pending map[string]pendingCommit) {
 	var parsed struct {
 		Cmd     string `json:"cmd"`
 		Command string `json:"command"`
@@ -318,11 +320,11 @@ func handleCommand(args json.RawMessage, turnIdx int, pending **pendingCommit) {
 	}
 
 	if shell.IsCommit(cmd) {
-		cDir := commitDir(cmd)
+		cDir := shell.CommitDir(cmd)
 		if cDir == "" {
 			cDir = cwd
 		}
-		*pending = &pendingCommit{
+		pending[callID] = pendingCommit{
 			turn:  turnIdx,
 			amend: shell.IsAmend(cmd),
 			dir:   cDir,
@@ -362,7 +364,7 @@ func handleSpawnAgent(cur *agent.Turn, args json.RawMessage) {
 	})
 }
 
-func handleToolOutput(cur *agent.Turn, item *ResponseItem, at time.Time, turns []agent.Turn, pending **pendingCommit) {
+func handleToolOutput(cur *agent.Turn, item *ResponseItem, at time.Time, turns []agent.Turn, pending map[string]pendingCommit) {
 	outputStr := ""
 	var rawStr string
 	if err := json.Unmarshal(item.Output, &rawStr); err == nil {
@@ -390,22 +392,30 @@ func handleToolOutput(cur *agent.Turn, item *ResponseItem, at time.Time, turns [
 		cur.Errors++
 	}
 
-	p := *pending
-	if p != nil {
-		if !isError && p.turn >= 0 && p.turn < len(turns) {
-			c := agent.Commit{
-				Kind: "committed",
-				At:   at,
-				Dir:  p.dir,
-			}
-			if p.amend {
-				c.Kind = "amended"
-			}
-			if sm := commitShaRegex.FindStringSubmatch(outputStr); len(sm) > 1 {
-				c.SHA = sm[1]
-			}
-			turns[p.turn].Committed = append(turns[p.turn].Committed, c)
-		}
-		*pending = nil
+	// This output settles its own call and no other. An output carrying no
+	// call id cannot say which command it belongs to, so it settles nothing
+	// rather than guessing at whichever commit is outstanding.
+	p, held := pending[item.CallID]
+	if !held || item.CallID == "" {
+		return
 	}
+	delete(pending, item.CallID)
+
+	// A refused commit is not a commit. They are common: nothing staged, or a
+	// hook that said no.
+	if isError || p.turn < 0 || p.turn >= len(turns) {
+		return
+	}
+	c := agent.Commit{
+		Kind: "committed",
+		At:   at,
+		Dir:  p.dir,
+	}
+	if p.amend {
+		c.Kind = "amended"
+	}
+	if sm := commitShaRegex.FindStringSubmatch(outputStr); len(sm) > 1 {
+		c.SHA = sm[1]
+	}
+	turns[p.turn].Committed = append(turns[p.turn].Committed, c)
 }

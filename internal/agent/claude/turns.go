@@ -2,7 +2,6 @@ package claude
 
 import (
 	"encoding/json"
-	"regexp"
 	"strings"
 
 	"github.com/nickelsec/bough/internal/agent"
@@ -186,7 +185,7 @@ func ExtractTurns(recs []*Record) []agent.Turn {
 					pending[b.ID] = pendingCommit{
 						turn:  len(turns) - 1,
 						amend: shell.IsAmend(in.Command),
-						dir:   commitDir(in.Command),
+						dir:   shell.CommitDir(in.Command),
 					}
 				}
 				p := shell.NormalisePath(in.path())
@@ -314,27 +313,4 @@ type pendingCommit struct {
 	turn  int
 	amend bool
 	dir   string
-}
-
-// leadingCD is a command that moves somewhere before doing anything else.
-//
-// A session about one project regularly commits in another: working on a tool
-// and its website together, say. Those commits are real, but they are not this
-// project's, and claiming them would have this project's diagram showing work
-// that happened somewhere else.
-var leadingCD = regexp.MustCompile(`^\s*cd\s+(?:"([^"]*)"|'([^']*)'|([^\s;&|]+))`)
-
-// commitDir is where a command committed, or "" for the project's own
-// directory, which is where a command that does not move runs.
-func commitDir(cmd string) string {
-	m := leadingCD.FindStringSubmatch(cmd)
-	if m == nil {
-		return ""
-	}
-	for _, g := range m[1:] {
-		if g != "" {
-			return shell.NormalisePath(g)
-		}
-	}
-	return ""
 }
