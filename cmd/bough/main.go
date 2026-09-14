@@ -113,25 +113,32 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return nil
 	}
 
+	build := buildable()
+
 	var sources []agent.Source
-	switch strings.ToLower(*agentFlag) {
-	case "claude", "claude-code":
-		sources = []agent.Source{claude.Source{Root: *root}}
-	case "codex":
-		sources = []agent.Source{codex.Source{Root: *root}}
+	var wanted []agent.Known
+	switch word := strings.ToLower(*agentFlag); word {
 	case "all", "":
 		if *root != "" {
-			// A custom root without an explicit --agent is a Claude history path,
-			// preserving existing flag semantics and isolated test runs.
-			sources = []agent.Source{claude.Source{Root: *root}}
+			// A custom root without an explicit --agent is a Claude history
+			// path, which is what it has always meant and what the isolated
+			// test runs rely on.
+			k, _ := agent.Lookup("claude-code")
+			wanted = []agent.Known{k}
 		} else {
-			sources = []agent.Source{
-				claude.Source{},
-				codex.Source{},
-			}
+			wanted = agent.Agents
 		}
 	default:
-		return fmt.Errorf("unknown agent %q; supported: claude, codex, all", *agentFlag)
+		k, ok := agent.ByFlag(word)
+		if !ok {
+			return fmt.Errorf("unknown agent %q; supported: %s", *agentFlag, agentWords())
+		}
+		wanted = []agent.Known{k}
+	}
+	for _, k := range wanted {
+		if open := build[k.Source]; open != nil {
+			sources = append(sources, open(*root))
+		}
 	}
 
 	sourcesMap := make(map[string]agent.Source, len(sources))
@@ -145,10 +152,13 @@ func run(args []string, stdout, stderr io.Writer) error {
 		projects = append(projects, found...)
 	}
 	if len(projects) == 0 {
-		if len(sources) == 1 && sources[0].Name() == "codex" {
-			return errors.New("no Codex history found; looked in ~/.codex/sessions")
+		// Named from the registry, so the wording follows whichever agents
+		// were actually looked at rather than naming one of them by hand.
+		var said []string
+		for _, k := range wanted {
+			said = append(said, k.Display+" in "+k.Where)
 		}
-		return errors.New("no Claude Code history found; looked in ~/.claude/projects")
+		return fmt.Errorf("no history found; looked for %s", strings.Join(said, " and "))
 	}
 
 	if *list {
@@ -520,4 +530,27 @@ func wider(at int, s string) int {
 		return n
 	}
 	return at
+}
+
+// agentWords lists what --agent accepts, for when somebody gets it wrong.
+func agentWords() string {
+	var all []string
+	for _, k := range agent.Agents {
+		all = append(all, k.Flag...)
+	}
+	return strings.Join(append(all, "all"), ", ")
+}
+
+// buildable is every source bough can construct, keyed by what it calls
+// itself.
+//
+// Separate from agent.Agents by necessity: the registry sits below the agent
+// packages so the core can read it, and only this package may import them to
+// make one. A test pins the two together, since half-registering an agent is
+// quiet in both directions.
+func buildable() map[string]func(root string) agent.Source {
+	return map[string]func(root string) agent.Source{
+		"claude-code": func(root string) agent.Source { return claude.Source{Root: root} },
+		"codex":       func(root string) agent.Source { return codex.Source{Root: root} },
+	}
 }

@@ -22,7 +22,12 @@ type Source struct {
 }
 
 // Name identifies this agent.
-func (Source) Name() string { return "claude-code" }
+// sourceName is what this package calls itself, in one place: the interface
+// method below and every Project it produces both read it.
+const sourceName = "claude-code"
+
+// Name identifies this agent, as every Project it produces spells it.
+func (Source) Name() string { return sourceName }
 
 // root resolves the directory to read from.
 func (s Source) root() (string, error) {
@@ -79,7 +84,7 @@ func (s Source) Detect() ([]agent.Project, error) {
 		projects = append(projects, agent.Project{
 			Name:       name,
 			Path:       path,
-			Source:     "claude-code",
+			Source:     sourceName,
 			Ref:        dir,
 			LastWorked: last,
 			Bytes:      size,

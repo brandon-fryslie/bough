@@ -82,21 +82,80 @@ type Session struct {
 	ParentID string
 }
 
+// Known describes one agent bough can read.
+//
+// Everything a reader or a flag needs to say about an agent lives here, in one
+// row per agent. It used to be spelled out in seven places: two Name methods,
+// two Source literals, a Display switch, a copy of that switch in the page, the
+// --agent flag, and the wording of the "no history found" error. Adding an
+// agent meant finding all seven, and the page's copy had already drifted from
+// the switch it was copied from.
+type Known struct {
+	// Source is what the agent's own package calls itself, as it appears on a
+	// Project.
+	Source string
+
+	// Display is the name a person would recognise. "claude-code" is the name
+	// of a source; "Claude Code" is the name of a tool.
+	Display string
+
+	// Flag are the words --agent accepts for this one.
+	Flag []string
+
+	// Where is the directory its history lives in, for saying where bough
+	// looked when it found nothing.
+	Where string
+}
+
+// Agents is every agent bough reads, in the order they were added.
+var Agents = []Known{
+	{
+		Source:  "claude-code",
+		Display: "Claude Code",
+		Flag:    []string{"claude", "claude-code"},
+		Where:   "~/.claude/projects",
+	},
+	{
+		Source:  "codex",
+		Display: "Codex",
+		Flag:    []string{"codex"},
+		Where:   "~/.codex/sessions",
+	},
+}
+
+// Lookup finds an agent by its source name.
+func Lookup(source string) (Known, bool) {
+	for _, k := range Agents {
+		if k.Source == source {
+			return k, true
+		}
+	}
+	return Known{}, false
+}
+
+// ByFlag finds an agent by a word --agent accepts.
+func ByFlag(word string) (Known, bool) {
+	for _, k := range Agents {
+		for _, f := range k.Flag {
+			if f == word {
+				return k, true
+			}
+		}
+	}
+	return Known{}, false
+}
+
 // Display names an agent for a person to read.
 //
-// Source strings are what each agent's package calls itself and are not always
-// what somebody wants to see: "claude-code" is the name of a source, "Claude
-// Code" is the name of a tool. Both views ask here rather than spelling it
-// themselves, so the terminal and the page cannot drift apart.
+// Both views ask here rather than spelling it themselves, so the terminal and
+// the page cannot drift apart. The page is handed this table rather than
+// holding a copy of it.
 //
 // An agent nobody has named yet comes back as it was given, which is better
 // than an empty column.
 func Display(source string) string {
-	switch source {
-	case "claude-code":
-		return "Claude Code"
-	case "codex":
-		return "Codex"
+	if k, ok := Lookup(source); ok {
+		return k.Display
 	}
 	return source
 }

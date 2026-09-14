@@ -151,8 +151,12 @@ func TestMissingHistoryExplainsItself(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error when there is no history")
 	}
-	if !strings.Contains(err.Error(), "no Claude Code history") {
-		t.Errorf("error should say what was looked for, got: %v", err)
+	// The agent and the directory, both from the registry rather than written
+	// out here, so adding an agent does not mean editing this wording.
+	for _, want := range []string{"Claude Code", "~/.claude/projects"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should name %q, got: %v", want, err)
+		}
 	}
 }
 
@@ -333,5 +337,33 @@ func TestVersionFlagPrints(t *testing.T) {
 	}
 	if got := strings.TrimSpace(out.String()); got == "" {
 		t.Error("--version printed nothing")
+	}
+}
+
+// Every agent bough can build is in the registry, and every agent in the
+// registry can be built.
+//
+// The two are separate lists by necessity: the registry lives below the agent
+// packages so the core can read it, and only main can import those packages to
+// construct one. Nothing else makes them agree, and half-registering an agent
+// is quiet in both directions. A source missing from the registry has no
+// display name and no --agent word; a row with no source behind it accepts a
+// flag that then finds nothing.
+func TestEveryAgentIsBothRegisteredAndBuildable(t *testing.T) {
+	built := buildable()
+
+	for _, k := range agent.Agents {
+		if _, ok := built[k.Source]; !ok {
+			t.Errorf("%s is in the registry but nothing can build it", k.Source)
+		}
+		if k.Display == "" || k.Where == "" || len(k.Flag) == 0 {
+			t.Errorf("%s is registered without a name, a place or a flag", k.Source)
+		}
+	}
+
+	for source := range built {
+		if _, ok := agent.Lookup(source); !ok {
+			t.Errorf("%s can be built but is not in the registry", source)
+		}
 	}
 }

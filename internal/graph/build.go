@@ -87,11 +87,12 @@ func Build(p agent.Project, sessions []agent.Session, opt Options) Graph {
 		Generated: opt.Now().UTC(),
 		Tool:      opt.Tool,
 		Project: Project{
-			Name:     p.Name,
-			Path:     p.Path,
-			Agent:    p.Source,
-			Sessions: len(sessions),
-			RepoRead: repoRead,
+			Name:      p.Name,
+			Path:      p.Path,
+			Agent:     p.Source,
+			AgentName: agent.Display(p.Source),
+			Sessions:  len(sessions),
+			RepoRead:  repoRead,
 		},
 	}
 

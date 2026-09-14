@@ -57,6 +57,14 @@ type Project struct {
 	// Agent names where the history came from, for example "claude-code".
 	Agent string `json:"agent"`
 
+	// AgentName is the same agent as a person would read it, "Claude Code".
+	//
+	// Carried rather than worked out by whoever is drawing. The page used to
+	// hold its own copy of the switch that does this, with a comment saying it
+	// mirrored the Go one, which is the arrangement that lets two things that
+	// must agree stop agreeing.
+	AgentName string `json:"agentName,omitempty"`
+
 	// Sessions is how many separate sittings-with-the-agent this covers. It is
 	// reported because it is a fact about the record, not because it maps to
 	// anything the user would recognise as a unit of work.
