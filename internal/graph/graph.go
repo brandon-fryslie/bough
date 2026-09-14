@@ -15,7 +15,12 @@ import "time"
 // SchemaVersion is bumped when the shape below changes in a way that would
 // break a reader. Consumers should check it and refuse politely rather than
 // misread newer output.
-const SchemaVersion = 1
+//
+// 2: a delegation's task name moved from "kind" to "name". Both facts were
+// being written into one field, and which one it held depended on the agent:
+// Claude put the sort of sub-agent there and Codex the name of the task. A
+// reader that took "kind" as the task name now finds it empty on Codex.
+const SchemaVersion = 2
 
 // Graph is one project's history.
 type Graph struct {
@@ -113,7 +118,10 @@ type Turn struct {
 
 // Delegation is a unit of work given to a sub-agent.
 type Delegation struct {
+	// Kind is the sort of sub-agent, Name is what the task was called, and
+	// either may be absent: agents record one or the other, rarely both.
 	Kind        string `json:"kind,omitempty"`
+	Name        string `json:"name,omitempty"`
 	Description string `json:"description"`
 }
 

@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/nickelsec/bough/internal/agent"
+	"github.com/nickelsec/bough/internal/agent/shell"
 )
 
 const maxLine = 16 << 20
@@ -91,7 +91,7 @@ func (s Source) Detect() ([]agent.Project, error) {
 		if err != nil {
 			continue
 		}
-		last, size := extent(g.files)
+		last, size := shell.Extent(g.files)
 
 		projects = append(projects, agent.Project{
 			Name:       filepath.Base(pPath),
@@ -206,22 +206,6 @@ func ReadRecords(r io.Reader) ([]*Record, error) {
 		return nil, err
 	}
 	return recs, nil
-}
-
-func extent(files []string) (time.Time, int64) {
-	var last time.Time
-	var size int64
-	for _, fp := range files {
-		info, err := os.Stat(fp)
-		if err != nil {
-			continue
-		}
-		size += info.Size()
-		if info.ModTime().After(last) {
-			last = info.ModTime()
-		}
-	}
-	return last, size
 }
 
 func detectCWD(transcriptPath string) string {

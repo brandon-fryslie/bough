@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/nickelsec/bough/internal/agent"
+	"github.com/nickelsec/bough/internal/agent/shell"
 )
 
 // Record is one line of a transcript.
@@ -208,29 +209,8 @@ type Block struct {
 	IsError bool `json:"is_error"`
 }
 
-// Time parses the record timestamp, returning the zero time if it is missing or
-// malformed. A bad timestamp should never stop a session from loading.
-func (r *Record) Time() time.Time {
-	if r.Timestamp == "" {
-		return time.Time{}
-	}
-	t, err := time.Parse(time.RFC3339Nano, r.Timestamp)
-	if err != nil {
-		return time.Time{}
-	}
-	// Local time, not UTC. Agents write timestamps with a Z suffix, and
-	// time.Parse hands those back in UTC, which is a different calendar day
-	// from the one the person was sitting at for a good part of every evening.
-	// A prompt typed at 01:57 in Asia/Calcutta is 20:27 the previous day in
-	// UTC, and the diagram headed it with yesterday's date.
-	//
-	// Durations are unaffected either way, so segmenting never noticed. It is
-	// the day a piece of work belongs to that was wrong, which is exactly what
-	// the reader is looking at.
-	//nolint:gosmopolitan // deliberate: the reader's own clock is the right
-	// frame for which day a piece of work belongs to.
-	return t.Local()
-}
+// Time is when the record was written, in the reader's own zone.
+func (r *Record) Time() time.Time { return shell.When(r.Timestamp) }
 
 // Commit returns the commit this record reports, or nil if it reports none.
 //

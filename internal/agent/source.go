@@ -98,12 +98,41 @@ func Display(source string) string {
 
 // Delegation is a unit of work the agent handed to a sub-agent.
 type Delegation struct {
-	// Kind is the sort of sub-agent, for example "Explore" or "Plan".
+	// Kind is the sort of sub-agent, for example "Explore" or "Plan". Empty
+	// when the agent does not name a type.
 	Kind string
 
+	// Name is what this particular piece of handed-off work was called, for
+	// example "pixel_art". Empty when the agent does not name it.
+	//
+	// Separate from Kind because they are separate facts and were being put in
+	// the same field. Claude names the type of sub-agent and never the task;
+	// Codex names the task and often not the type. Reading both out of one
+	// string meant every consumer had to know which agent it came from to know
+	// what the word in front of it meant.
+	Name string
+
 	// Description is what the sub-agent was asked to do, in the words used at
-	// the time.
+	// the time. Empty when the brief is unreadable: Codex encrypts it.
 	Description string
+}
+
+// Says returns the best single phrase for a delegation, for a reader who has
+// room for one.
+//
+// The brief is what somebody asked for, so it wins. Failing that the task's
+// own name says what the work was, and the type of sub-agent says only who did
+// it, which is the least informative of the three. Printing Kind alone left a
+// bare "handed off:" with nothing after it on agents that do not set it.
+func (d Delegation) Says() string {
+	switch {
+	case d.Description != "":
+		return d.Description
+	case d.Name != "":
+		return d.Name
+	default:
+		return d.Kind
+	}
 }
 
 // Commit is a commit the agent made while working on a turn.
@@ -192,7 +221,19 @@ func (t *Tokens) Total() int {
 // already been resolved by the time a Turn exists.
 type Turn struct {
 	At   time.Time
-	Text string // what the human typed
+	Text string // what the human typed, empty when nobody typed anything
+
+	// TaskName is what a piece of handed-off work was called, when this turn
+	// is a sub-agent's rather than a person's.
+	//
+	// A sub-agent's rollout has no prompt in it: nobody typed anything, the
+	// work arrived as an instruction from another agent. That used to be
+	// written into Text, first as the task's name and then as the literal
+	// "delegated task" when there was no name, which made a field documented
+	// as the reader's own words hold something no reader ever wrote. A turn
+	// with no prompt now says so by leaving Text empty, and anything with a
+	// line to fill asks Says for the best phrase available.
+	TaskName string
 
 	// Tools counts calls by tool name.
 	Tools map[string]int
@@ -230,4 +271,17 @@ type Turn struct {
 	// SegmentHint marks a boundary the agent itself recorded, such as a context
 	// compaction. Free evidence, worth more than anything we infer.
 	SegmentHint bool
+}
+
+// Says returns the best phrase describing a turn, for somewhere with room for
+// one line.
+//
+// A prompt is the reader's own words and always wins. A sub-agent's turn has
+// none, so the name of the task it was given stands in. A turn with neither
+// returns empty rather than a stand-in nobody wrote.
+func (t Turn) Says() string {
+	if t.Text != "" {
+		return t.Text
+	}
+	return t.TaskName
 }

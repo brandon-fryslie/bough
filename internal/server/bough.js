@@ -938,10 +938,13 @@
       // are never trimmed.
       li.appendChild(node("p", "said", turn.text));
       // Agents differ in what they record about a hand-off. Claude writes a
-      // brief describing the work; Codex encrypts that and leaves only the name
-      // of the sub-agent. Showing the description alone left an empty line.
+      // brief describing the work and names the sort of sub-agent; Codex
+      // encrypts the brief and names the task instead. The brief is what
+      // somebody asked for so it wins, then the task's name, and the sort of
+      // sub-agent last since it says only who did the work. Showing the
+      // description alone left an empty line.
       (turn.delegated || []).forEach(function (job) {
-        var said = job.description || job.kind;
+        var said = job.description || job.name || job.kind;
         if (said) li.appendChild(node("p", "handoff", said));
       });
       // A commit sits under the prompt that produced it, so the record reads

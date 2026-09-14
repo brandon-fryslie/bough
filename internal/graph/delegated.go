@@ -156,22 +156,26 @@ func describe(dst *agent.Turn, kid agent.Session) {
 	name := kid.Turns[0].Text
 
 	// The hand-off is usually already recorded, from the spawn call in the
-	// parent's own transcript. The two name the same agent differently: the
+	// parent's own transcript. The two name the same task differently: the
 	// call says "pixel_art" where the sub-agent's transcript says the full path
 	// "/root/pixel_art". Appending would show one delegation twice, so an
-	// existing entry naming the same agent is left as it is.
+	// existing entry naming the same task is left as it is.
+	//
+	// This reads Name rather than Kind. What is being matched is the name of
+	// the task, which is what both sides carry; Kind is the sort of sub-agent
+	// and Codex usually does not record one.
 	for i := range dst.Delegated {
-		if sameAgent(dst.Delegated[i].Kind, name) {
+		if sameAgent(dst.Delegated[i].Name, name) {
 			return
 		}
 	}
 	for i := range dst.Delegated {
-		if dst.Delegated[i].Kind == "" {
-			dst.Delegated[i].Kind = name
+		if dst.Delegated[i].Name == "" {
+			dst.Delegated[i].Name = name
 			return
 		}
 	}
-	dst.Delegated = append(dst.Delegated, agent.Delegation{Kind: name})
+	dst.Delegated = append(dst.Delegated, agent.Delegation{Name: name})
 }
 
 // sameAgent reports whether two names refer to one sub-agent. A spawn call

@@ -17,12 +17,6 @@ var patchFileRegex = regexp.MustCompile(`(?m)^\*\*\*\s*(?:Add|Update|Delete)\s*F
 var execCmdRegex = regexp.MustCompile(`cmd:\s*"((?:\\.|[^"\\])*)"`)
 var execWorkdirRegex = regexp.MustCompile(`workdir:\s*"((?:\\.|[^"\\])*)"`)
 
-type pendingCommit struct {
-	turn  int
-	amend bool
-	dir   string
-}
-
 // ExtractTurns parses Codex rollout records into normalised agent.Turn instances.
 // Records are deduplicated by item ID to prevent inflated counts upon session replay.
 func ExtractTurns(recs []*Record) []agent.Turn {
@@ -35,7 +29,7 @@ func ExtractTurns(recs []*Record) []agent.Turn {
 	// exit code of an unrelated command decided whether the commit counted,
 	// a second commit issued before the first result replaced it, and a
 	// result arriving after the next prompt was lost entirely.
-	pending := map[string]pendingCommit{}
+	pending := map[string]shell.PendingCommit{}
 
 	seenItems := make(map[string]bool)
 	seenUsage := make(map[string]bool)
@@ -73,18 +67,23 @@ func ExtractTurns(recs []*Record) []agent.Turn {
 				seenItems[item.ID] = true
 			}
 
+			// A sub-agent's turn carries no prompt, because nobody typed
+			// one. The task's name goes in its own field rather than
+			// standing in for words the reader never wrote.
 			text := r.PromptText()
+			task := ""
 			if r.IsNewTask() {
-				text = r.AgentTaskText()
+				text, task = "", r.AgentTaskText()
 			}
 			turns = append(turns, agent.Turn{
-				At:     r.Time(),
-				Text:   text,
-				Tools:  map[string]int{},
-				Files:  map[string]int{},
-				Edits:  map[string]int{},
-				Lines:  map[string]int{},
-				Models: map[string]int{},
+				At:       r.Time(),
+				Text:     text,
+				TaskName: task,
+				Tools:    map[string]int{},
+				Files:    map[string]int{},
+				Edits:    map[string]int{},
+				Lines:    map[string]int{},
+				Models:   map[string]int{},
 			})
 			cur = &turns[len(turns)-1]
 			clear(pending)
@@ -202,7 +201,7 @@ func handleTokenCount(cur *agent.Turn, r *Record, currentModel string, seen map[
 	}
 }
 
-func handleToolCall(cur *agent.Turn, item *ResponseItem, turnIdx int, pending map[string]pendingCommit) {
+func handleToolCall(cur *agent.Turn, item *ResponseItem, turnIdx int, pending map[string]shell.PendingCommit) {
 	cur.Tools[item.Name]++
 
 	switch item.Name {
@@ -270,7 +269,7 @@ func changed(hunk string) int {
 	return n
 }
 
-func handleExec(input, callID string, turnIdx int, pending map[string]pendingCommit) {
+func handleExec(input, callID string, turnIdx int, pending map[string]shell.PendingCommit) {
 	cmdMatch := execCmdRegex.FindStringSubmatch(input)
 	cmd := ""
 	if len(cmdMatch) > 1 {
@@ -287,15 +286,15 @@ func handleExec(input, callID string, turnIdx int, pending map[string]pendingCom
 		if cDir == "" {
 			cDir = workdir
 		}
-		pending[callID] = pendingCommit{
-			turn:  turnIdx,
-			amend: shell.IsAmend(cmd),
-			dir:   cDir,
+		pending[callID] = shell.PendingCommit{
+			Turn:  turnIdx,
+			Amend: shell.IsAmend(cmd),
+			Dir:   cDir,
 		}
 	}
 }
 
-func handleCommand(args json.RawMessage, callID string, turnIdx int, pending map[string]pendingCommit) {
+func handleCommand(args json.RawMessage, callID string, turnIdx int, pending map[string]shell.PendingCommit) {
 	var parsed struct {
 		Cmd     string `json:"cmd"`
 		Command string `json:"command"`
@@ -324,10 +323,10 @@ func handleCommand(args json.RawMessage, callID string, turnIdx int, pending map
 		if cDir == "" {
 			cDir = cwd
 		}
-		pending[callID] = pendingCommit{
-			turn:  turnIdx,
-			amend: shell.IsAmend(cmd),
-			dir:   cDir,
+		pending[callID] = shell.PendingCommit{
+			Turn:  turnIdx,
+			Amend: shell.IsAmend(cmd),
+			Dir:   cDir,
 		}
 	}
 }
@@ -344,13 +343,12 @@ func handleSpawnAgent(cur *agent.Turn, args json.RawMessage) {
 	} else {
 		_ = json.Unmarshal(args, &parsed)
 	}
-	kind := parsed.AgentType
-	if kind == "" {
-		kind = parsed.TaskName
-	}
-	if kind == "" {
-		kind = "subagent"
-	}
+	// The type of sub-agent and the name of the task are two different facts,
+	// and they used to be squeezed into one field with a literal "subagent"
+	// when neither was recorded. An unnamed thing is better left empty than
+	// given a word nobody wrote: a reader can see there is nothing there, and
+	// nothing downstream has to guess whether "subagent" was a real type.
+	//
 	// The brief is encrypted when one agent spawns another, so there is nothing
 	// to show. The delegation is still recorded: that the work was handed off is
 	// worth knowing even when what was asked for is not readable.
@@ -359,12 +357,13 @@ func handleSpawnAgent(cur *agent.Turn, args json.RawMessage) {
 		desc = ""
 	}
 	cur.Delegated = append(cur.Delegated, agent.Delegation{
-		Kind:        kind,
+		Kind:        parsed.AgentType,
+		Name:        parsed.TaskName,
 		Description: desc,
 	})
 }
 
-func handleToolOutput(cur *agent.Turn, item *ResponseItem, at time.Time, turns []agent.Turn, pending map[string]pendingCommit) {
+func handleToolOutput(cur *agent.Turn, item *ResponseItem, at time.Time, turns []agent.Turn, pending map[string]shell.PendingCommit) {
 	outputStr := ""
 	var rawStr string
 	if err := json.Unmarshal(item.Output, &rawStr); err == nil {
@@ -403,19 +402,19 @@ func handleToolOutput(cur *agent.Turn, item *ResponseItem, at time.Time, turns [
 
 	// A refused commit is not a commit. They are common: nothing staged, or a
 	// hook that said no.
-	if isError || p.turn < 0 || p.turn >= len(turns) {
+	if isError || p.Turn < 0 || p.Turn >= len(turns) {
 		return
 	}
 	c := agent.Commit{
 		Kind: "committed",
 		At:   at,
-		Dir:  p.dir,
+		Dir:  p.Dir,
 	}
-	if p.amend {
+	if p.Amend {
 		c.Kind = "amended"
 	}
 	if sm := commitShaRegex.FindStringSubmatch(outputStr); len(sm) > 1 {
 		c.SHA = sm[1]
 	}
-	turns[p.turn].Committed = append(turns[p.turn].Committed, c)
+	turns[p.Turn].Committed = append(turns[p.Turn].Committed, c)
 }

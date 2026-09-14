@@ -102,8 +102,17 @@ func TestDelegatedTaskOpensATurn(t *testing.T) {
 	if len(turns) != 1 {
 		t.Fatalf("got %d turns, want 1: a sub-agent's work went missing", len(turns))
 	}
-	if got := turns[0].Text; got != "/root/pixel_art" {
-		t.Errorf("label = %q, want the task name", got)
+	// Nobody typed a prompt here, so Text is empty and the task's name lives
+	// in its own field. Writing the name into Text made a field documented as
+	// the reader's own words hold something no reader wrote.
+	if got := turns[0].Text; got != "" {
+		t.Errorf("text = %q, want empty: a sub-agent's turn has no prompt", got)
+	}
+	if got := turns[0].TaskName; got != "/root/pixel_art" {
+		t.Errorf("task name = %q, want the task name", got)
+	}
+	if got := turns[0].Says(); got != "/root/pixel_art" {
+		t.Errorf("Says() = %q, want the task name when there is no prompt", got)
 	}
 }
 
@@ -146,8 +155,17 @@ func TestEncryptedBriefIsNotShown(t *testing.T) {
 	if d.Description != "" {
 		t.Errorf("description = %q, want empty: ciphertext must not be shown", d.Description)
 	}
-	if d.Kind != "pixel_art" {
-		t.Errorf("kind = %q, want the task name", d.Kind)
+	// The task name is a Name, not a Kind. Codex records no sub-agent type
+	// here, and putting the task name in Kind meant the same field held a type
+	// on Claude and a name on Codex.
+	if d.Name != "pixel_art" {
+		t.Errorf("name = %q, want the task name", d.Name)
+	}
+	if d.Kind != "" {
+		t.Errorf("kind = %q, want empty: no sub-agent type was recorded", d.Kind)
+	}
+	if got := d.Says(); got != "pixel_art" {
+		t.Errorf("Says() = %q, want the task name when the brief is unreadable", got)
 	}
 }
 

@@ -99,7 +99,7 @@ func ExtractTurns(recs []*Record) []agent.Turn {
 	// Commit commands waiting on their result, keyed by tool call id. A commit
 	// only counts once the call comes back without an error, since plenty are
 	// refused for having nothing staged.
-	pending := map[string]pendingCommit{}
+	pending := map[string]shell.PendingCommit{}
 
 	// Edits waiting on their result, keyed the same way. The call names the
 	// file and the result says how much of it changed.
@@ -182,10 +182,10 @@ func ExtractTurns(recs []*Record) []agent.Turn {
 				}
 				// Hold the commit until its result says whether it worked.
 				if in.Command != "" && b.ID != "" && shell.IsCommit(in.Command) {
-					pending[b.ID] = pendingCommit{
-						turn:  len(turns) - 1,
-						amend: shell.IsAmend(in.Command),
-						dir:   shell.CommitDir(in.Command),
+					pending[b.ID] = shell.PendingCommit{
+						Turn:  len(turns) - 1,
+						Amend: shell.IsAmend(in.Command),
+						Dir:   shell.CommitDir(in.Command),
 					}
 				}
 				p := shell.NormalisePath(in.path())
@@ -213,11 +213,11 @@ func ExtractTurns(recs []*Record) []agent.Turn {
 				delete(pending, b.ToolUseID)
 				// A refused commit is not a commit. They are common: nothing
 				// staged, or a hook that said no.
-				if b.IsError || p.turn < 0 || p.turn >= len(turns) {
+				if b.IsError || p.Turn < 0 || p.Turn >= len(turns) {
 					continue
 				}
-				c := agent.Commit{Kind: "committed", At: r.Time(), Dir: p.dir}
-				if p.amend {
+				c := agent.Commit{Kind: "committed", At: r.Time(), Dir: p.Dir}
+				if p.Amend {
 					c.Kind = "amended"
 				}
 				// The hash only exists when Claude Code managed to read it back
@@ -229,7 +229,7 @@ func ExtractTurns(recs []*Record) []agent.Turn {
 						c.Kind = got.Kind
 					}
 				}
-				turns[p.turn].Committed = append(turns[p.turn].Committed, c)
+				turns[p.Turn].Committed = append(turns[p.Turn].Committed, c)
 			}
 		}
 	}
@@ -306,11 +306,4 @@ func recordLines(turns []agent.Turn, edited map[string]editedFile, b Block, r *R
 type editedFile struct {
 	turn int
 	path string
-}
-
-// pendingCommit is a commit command waiting to hear whether it worked.
-type pendingCommit struct {
-	turn  int
-	amend bool
-	dir   string
 }

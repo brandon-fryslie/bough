@@ -246,11 +246,15 @@ func models(m map[string]int) string {
 //
 // Agents differ in what they record. Claude writes a brief before handing work
 // over, and that describes it. Codex encrypts the brief and leaves only the
-// name of the sub-agent, so the name is what there is to show. Printing the
+// name of the task, so the name is what there is to show. Printing the
 // description alone left a bare "handed off:" with nothing after it.
 func handoff(d Delegation) string {
-	if d.Description != "" {
+	switch {
+	case d.Description != "":
 		return d.Description
+	case d.Name != "":
+		return d.Name
+	default:
+		return d.Kind
 	}
-	return d.Kind
 }
