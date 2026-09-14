@@ -26,10 +26,17 @@ type Options struct {
 	// Tool is the version string recorded in the output.
 	Tool string
 
-	// SkipRepo leaves the project's git history alone. The commits bough shows
-	// then come from the transcript only, which means the ones made quietly
-	// arrive without a hash.
-	SkipRepo bool
+	// Repo is the project's git history, when the caller read it.
+	//
+	// Passed in rather than read here. Building a graph is arithmetic over
+	// sessions, and a function that shells out to git cannot be tested without
+	// a filesystem and a git to shell out to. Reading the repository is the
+	// caller's business; deciding what the commits mean is this package's.
+	//
+	// A zero History means it was not read, which is not the same as a
+	// repository with no commits in it: a hash the transcript carried stays as
+	// it is rather than being cleared as unreachable.
+	Repo repo.History
 
 	// Now supplies the timestamp, so tests can pin it.
 	Now func() time.Time
@@ -56,6 +63,13 @@ func Build(p agent.Project, sessions []agent.Session, opt Options) Graph {
 		opt.Now = time.Now
 	}
 
+	// Everything below writes into the turns it is given: onlyHere drops
+	// commits made elsewhere, and matching against the repository rewrites the
+	// hashes. Those edits used to land in the caller's own slices, so calling
+	// Build twice on one set of sessions gave two different answers and
+	// nothing else could reuse them afterwards.
+	sessions = clone(sessions)
+
 	// Delegated work belongs inside the turn that asked for it, so it is put
 	// back before anything is measured or divided. Doing it here rather than in
 	// each agent keeps the sub-agent's own session intact up to this point,
@@ -65,10 +79,7 @@ func Build(p agent.Project, sessions []agent.Session, opt Options) Graph {
 	// A commit made in another repository is not this project's work, whether
 	// or not the repository can be read, so it goes first either way.
 	onlyHere(p.Path, sessions)
-	repoRead := false
-	if !opt.SkipRepo {
-		repoRead = fromRepo(p.Path, sessions)
-	}
+	repoRead := fromRepo(opt.Repo, sessions)
 
 	var goals []rollup.Goal
 	titles := map[int]string{}
@@ -278,11 +289,7 @@ const matchWindow = 90 * time.Second
 // or is on a machine without git leaves the transcript's own account standing.
 // fromRepo fills in what the transcript could not say, and reports whether the
 // repository was actually consulted.
-func fromRepo(dir string, sessions []agent.Session) bool {
-	if dir == "" {
-		return false
-	}
-	h := repo.Read(dir)
+func fromRepo(h repo.History, sessions []agent.Session) bool {
 	// Nothing was consulted, so nothing can be confirmed or contradicted. The
 	// hashes the transcript carried stay as they are: unverified, but the best
 	// that is known. Clearing them here would empty every hash on a machine
@@ -481,4 +488,27 @@ func commitOf(c agent.Commit) Commit {
 		Added:   c.Added,
 		Removed: c.Removed,
 	}
+}
+
+// clone copies the sessions deeply enough that nothing below can be seen by
+// the caller.
+//
+// Only as deep as it needs to be. The turns are rewritten, so those are
+// copied, and so is each turn's commit list because commits are dropped from
+// it and their hashes overwritten. The maps counting tools, files and lines
+// are read and never written here, so they are shared rather than duplicated:
+// copying them on every build would be the expensive part and would buy
+// nothing.
+func clone(sessions []agent.Session) []agent.Session {
+	out := make([]agent.Session, len(sessions))
+	for i, s := range sessions {
+		s.Turns = append([]agent.Turn(nil), s.Turns...)
+		for j := range s.Turns {
+			if s.Turns[j].Committed != nil {
+				s.Turns[j].Committed = append([]agent.Commit(nil), s.Turns[j].Committed...)
+			}
+		}
+		out[i] = s
+	}
+	return out
 }

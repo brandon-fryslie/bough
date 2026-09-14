@@ -167,7 +167,7 @@ func TestBuildFoldsDelegatedWork(t *testing.T) {
 	child := agent.Session{ID: "C", ParentID: "S", Turns: []agent.Turn{spent(31, "/root/pixel_art", 40, 4)}}
 
 	opt := DefaultOptions()
-	opt.SkipRepo = true
+
 	opt.Now = func() time.Time { return minute(50) }
 
 	g := Build(agent.Project{Name: "site", Path: "/site"}, []agent.Session{parent, child}, opt)

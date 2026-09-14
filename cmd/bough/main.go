@@ -23,6 +23,7 @@ import (
 	"github.com/nickelsec/bough/internal/banner"
 	"github.com/nickelsec/bough/internal/graph"
 	"github.com/nickelsec/bough/internal/pick"
+	"github.com/nickelsec/bough/internal/repo"
 	"github.com/nickelsec/bough/internal/server"
 )
 
@@ -191,7 +192,12 @@ func run(args []string, stdout, stderr io.Writer) error {
 
 	opt := graph.DefaultOptions()
 	opt.Tool = released()
-	opt.SkipRepo = *noRepo
+	// Reading git happens here, at the edge, rather than inside the graph.
+	// Building a graph is arithmetic over sessions; shelling out is not, and a
+	// package that does both cannot be tested without a filesystem.
+	if !*noRepo {
+		opt.Repo = repo.Read(target.Path)
+	}
 	g := graph.Build(target, sessions, opt)
 
 	w := stdout

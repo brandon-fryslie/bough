@@ -49,7 +49,7 @@ func TestThePageSpellsAgentsLikeTheTerminal(t *testing.T) {
 		g := graph.Build(
 			agent.Project{Name: "p", Path: "/p", Source: a.Source},
 			nil,
-			graph.Options{Now: func() time.Time { return time.Time{} }, SkipRepo: true},
+			graph.Options{Now: func() time.Time { return time.Time{} }},
 		)
 		b, err := render(g)
 		if err != nil {
