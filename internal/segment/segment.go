@@ -231,17 +231,19 @@ func overlap(seen map[string]bool, words []string) float64 {
 	return float64(shared) / float64(len(words))
 }
 
-// substantiveLength is how long a prompt has to be before its wording is worth
+// SubstantiveLength is how long a prompt has to be before its wording is worth
 // comparing.
 //
 // Chosen from the length distribution of real prompts rather than picked. Across
 // 719 prompts the median was 50 characters, and everything below about 80 was
 // dominated by continuations: "whats next on out action item?", "yes this works
 // but still it misses out some names". New requests reliably run longer.
-const substantiveLength = 80
+// Exported because the labeller asks the same question of a prompt and used
+// to carry its own copy of this number. One measurement, one place to retune.
+const SubstantiveLength = 80
 
 func isSubstantive(text string) bool {
-	if len(text) < substantiveLength {
+	if len(text) < SubstantiveLength {
 		return false
 	}
 	return !continuation(text)

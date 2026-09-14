@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/nickelsec/bough/internal/agent"
+	"github.com/nickelsec/bough/internal/segment"
 )
 
 // Label names a goal in a few words.
@@ -40,8 +41,10 @@ func firstBrief(turns []agent.Turn) string {
 }
 
 // requestLength is how long a prompt has to be before it reads as a request
-// rather than a nudge. Matched to the same measurement the segmenter uses.
-const requestLength = 80
+// rather than a nudge. It is the segmenter's measurement, not a second one:
+// two constants for one fact meant retuning it in one place and missing the
+// other.
+const requestLength = segment.SubstantiveLength
 
 // firstRequest returns the opening of the first substantial prompt.
 func firstRequest(turns []agent.Turn) string {

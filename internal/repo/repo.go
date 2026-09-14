@@ -34,15 +34,17 @@ type Commit struct {
 	Added   int
 	Removed int
 	Files   int
-
-	// taken marks a commit already matched to an event, so two events made
-	// moments apart cannot both claim it.
-	taken bool
 }
 
 // History is a project's commits, newest first.
 type History struct {
 	Commits []Commit
+
+	// Read says the repository was actually consulted. A history with no
+	// commits in it is ambiguous otherwise: an empty repository and a machine
+	// without git look identical, and they mean different things for a hash
+	// the transcript carried.
+	Read bool
 }
 
 // Read returns the commit history of the repository at dir.
@@ -51,6 +53,12 @@ type History struct {
 // not installed all return an empty history and no error. None of those are
 // problems the user needs telling about: they only mean the drawing keeps to
 // what the transcript knew.
+//
+// They do change what a hash means, though, which is why History says whether
+// it managed to read anything. A hash the transcript carried is a claim until
+// the repository confirms it; when the repository was never read, that claim
+// stands unchecked, and clearing the ones it cannot find would throw away
+// every hash on a machine with no git installed.
 func Read(dir string) History {
 	if dir == "" {
 		return History{}
@@ -68,7 +76,7 @@ func Read(dir string) History {
 	if err != nil {
 		return History{}
 	}
-	return History{Commits: parseLog(out)}
+	return History{Commits: parseLog(out), Read: true}
 }
 
 // parseLog turns git's output into commits.
@@ -104,45 +112,6 @@ func parseLog(out string) []Commit {
 		commits = append(commits, c)
 	}
 	return commits
-}
-
-// Near returns the commit closest in time to when, within window, or nil.
-//
-// A commit lands in the repository within a second or two of the tool call that
-// made it returning, so this is a tight match rather than a guess: on the
-// corpus this was built against, 47 of 49 fell within five seconds and only one
-// was close enough to another commit to be ambiguous.
-//
-// Each commit is handed out once. Two commits made in the same minute would
-// otherwise both match the first event, and the second event would take a
-// commit that was already spoken for.
-func (h *History) Near(when time.Time, window time.Duration) *Commit {
-	if when.IsZero() {
-		return nil
-	}
-	best := -1
-	var bestGap time.Duration
-	for i := range h.Commits {
-		c := &h.Commits[i]
-		if c.taken || c.When.IsZero() {
-			continue
-		}
-		gap := c.When.Sub(when)
-		if gap < 0 {
-			gap = -gap
-		}
-		if gap > window {
-			continue
-		}
-		if best < 0 || gap < bestGap {
-			best, bestGap = i, gap
-		}
-	}
-	if best < 0 {
-		return nil
-	}
-	h.Commits[best].taken = true
-	return &h.Commits[best]
 }
 
 // Sorted returns the commits oldest first, which is the order work happened in.

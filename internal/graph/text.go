@@ -169,9 +169,6 @@ func plural(n int, word string) string {
 	if n == 1 {
 		return fmt.Sprintf("%d %s", n, word)
 	}
-	if strings.HasSuffix(word, "e") {
-		return fmt.Sprintf("%d %ss", n, word)
-	}
 	return fmt.Sprintf("%d %ss", n, word)
 }
 

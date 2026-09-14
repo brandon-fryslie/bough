@@ -121,10 +121,10 @@ func absorb(dst *agent.Turn, src agent.Turn) {
 	addCounts(dst.Models, src.Models)
 
 	dst.Errors += src.Errors
-	dst.Tokens.Input += src.Tokens.Input
-	dst.Tokens.Output += src.Tokens.Output
-	dst.Tokens.CacheRead += src.Tokens.CacheRead
-	dst.Tokens.CacheWrite += src.Tokens.CacheWrite
+	// Through Add rather than field by field. A hand written sum here means a
+	// change to what a token count is has to be made twice, and the copy that
+	// gets missed is the one that only shows up on work involving sub-agents.
+	dst.Tokens.Add(src.Tokens)
 	dst.Committed = append(dst.Committed, src.Committed...)
 	dst.Delegated = append(dst.Delegated, src.Delegated...)
 }

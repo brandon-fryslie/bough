@@ -5,7 +5,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
 // A project that is not a repository, or has moved, is the ordinary case rather
@@ -60,47 +59,6 @@ func TestParseLogIgnoresBinaryCounts(t *testing.T) {
 	}
 }
 
-func TestNearMatchesTheClosestCommitOnlyOnce(t *testing.T) {
-	at := func(s string) time.Time {
-		v, err := time.Parse(time.RFC3339, s)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return v
-	}
-	h := History{Commits: []Commit{
-		{SHA: "aaa", When: at("2026-08-22T10:00:00Z")},
-		{SHA: "bbb", When: at("2026-08-22T10:00:20Z")},
-	}}
-
-	// Nearest wins.
-	if got := h.Near(at("2026-08-22T10:00:03Z"), time.Minute); got == nil || got.SHA != "aaa" {
-		t.Fatalf("got %v, want aaa", got)
-	}
-	// And is not handed out twice, so a second event close to the same commit
-	// takes the next one rather than repeating it.
-	if got := h.Near(at("2026-08-22T10:00:04Z"), time.Minute); got == nil || got.SHA != "bbb" {
-		t.Fatalf("got %v, want bbb", got)
-	}
-	// Nothing left within the window.
-	if got := h.Near(at("2026-08-22T10:00:05Z"), time.Minute); got != nil {
-		t.Errorf("got %v, want nil once every commit is spoken for", got)
-	}
-}
-
-func TestNearRespectsTheWindow(t *testing.T) {
-	when, _ := time.Parse(time.RFC3339, "2026-08-22T10:00:00Z")
-	h := History{Commits: []Commit{{SHA: "aaa", When: when}}}
-
-	far := when.Add(10 * time.Minute)
-	if got := h.Near(far, 90*time.Second); got != nil {
-		t.Errorf("got %v, want nil for a commit outside the window", got)
-	}
-	if got := h.Near(time.Time{}, time.Minute); got != nil {
-		t.Errorf("got %v, want nil for a zero time", got)
-	}
-}
-
 // The real thing, against a repository made for the test. Skipped where git is
 // not installed, since that is a machine bough still has to work on.
 func TestReadAgainstARealRepository(t *testing.T) {
@@ -145,4 +103,25 @@ func TestReadAgainstARealRepository(t *testing.T) {
 
 func writeFile(dir, name, body string) error {
 	return os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600)
+}
+
+// A history says whether the repository was actually consulted.
+//
+// An empty repository and a machine with no git installed both come back with
+// no commits, and they mean different things. A hash the transcript carried is
+// a claim: when the repository was read and cannot find it, the hash is stale
+// and showing it offers the reader something to check that does not check out.
+// When the repository was never read, the same hash is simply unconfirmed, and
+// clearing it would empty every hash on a machine without git.
+func TestHistorySaysWhetherItWasRead(t *testing.T) {
+	if h := Read(""); h.Read {
+		t.Error("an empty path reported that it read a repository")
+	}
+	if h := Read(filepath.Join(t.TempDir(), "nothing-here")); h.Read {
+		t.Error("a missing directory reported that it read a repository")
+	}
+	// A real repository, which is the case that has to come back true.
+	if h := Read("."); !h.Read {
+		t.Skip("no git available, so there is nothing to compare against")
+	}
 }

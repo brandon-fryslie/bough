@@ -119,3 +119,30 @@ func NormalisePath(p string) string {
 	p = path.Clean(strings.ReplaceAll(p, `\`, "/"))
 	return strings.ToLower(p)
 }
+
+// leadingCD is a command that moves somewhere before doing anything else.
+//
+// A session about one project regularly commits in another: working on a tool
+// and its website together, say. Those commits are real, but they are not this
+// project's, and claiming them would have this project's diagram showing work
+// that happened somewhere else.
+//
+// Agents differ in what else they record. Codex writes the command but not
+// always the directory it ran in, so where the command moves first that is the
+// better answer than the session's working directory.
+var leadingCD = regexp.MustCompile(`^\s*cd\s+(?:"([^"]*)"|'([^']*)'|([^\s;&|]+))`)
+
+// CommitDir is where a command committed, or "" for the project's own
+// directory, which is where a command that does not move runs.
+func CommitDir(cmd string) string {
+	m := leadingCD.FindStringSubmatch(cmd)
+	if m == nil {
+		return ""
+	}
+	for _, g := range m[1:] {
+		if g != "" {
+			return NormalisePath(g)
+		}
+	}
+	return ""
+}
