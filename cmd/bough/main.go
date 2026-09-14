@@ -165,7 +165,12 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return writeList(stdout, sourcesMap, projects)
 	}
 
-	target, err := choose(projects, name, stderr)
+	target, err := choose(projects, name, os.Stdin, stderr)
+	if errors.Is(err, pick.ErrCancelled) {
+		// Backing out is a decision, not a failure. It reaches main as a value
+		// so everything deferred on the way here still runs.
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -271,9 +276,9 @@ var valueFlags = map[string]bool{"root": true, "o": true, "agent": true}
 // always shows what is there rather than jumping straight into one project.
 // The project you are standing in is marked and put first, so the common case
 // is still a single keypress.
-func choose(projects []agent.Project, arg string, _ io.Writer) (agent.Project, error) {
+func choose(projects []agent.Project, arg string, in io.Reader, out io.Writer) (agent.Project, error) {
 	if arg == "" {
-		return offer(projects)
+		return offer(projects, in, out)
 	}
 
 	if p, ok := byPath(projects, arg); ok {
@@ -308,12 +313,12 @@ func choose(projects []agent.Project, arg string, _ io.Writer) (agent.Project, e
 }
 
 // offer asks which project to read, with the one you are standing in first.
-func offer(projects []agent.Project) (agent.Project, error) {
+func offer(projects []agent.Project, in io.Reader, out io.Writer) (agent.Project, error) {
 	// The mark only appears when there is a question to ask. Naming a project
 	// means you know what you want, and a banner would be in the way.
-	banner.Write(os.Stderr, "what did you actually build?")
+	banner.Write(out, "what did you actually build?")
 
-	projects, here := currentFirst(projects)
+	projects, here := currentFirst(projects, workingDir())
 
 	items := make([]pick.Item, len(projects))
 	for i, p := range projects {
@@ -324,12 +329,11 @@ func offer(projects []agent.Project) (agent.Project, error) {
 		items[i] = pick.Item{Label: label, Detail: describe(p)}
 	}
 
-	i, err := pick.Choose("Which project?", items)
-	if errors.Is(err, pick.ErrCancelled) {
-		// Backing out is a decision, not a failure.
-		os.Exit(0)
-	}
+	i, err := pick.From(in, out, "Which project?", items)
 	if err != nil {
+		// Cancelling comes back as a value rather than as an exit. Calling
+		// os.Exit here skipped every deferred close on the way out and made
+		// this path impossible to drive from a test.
 		return agent.Project{}, err
 	}
 	return projects[i], nil
@@ -337,9 +341,12 @@ func offer(projects []agent.Project) (agent.Project, error) {
 
 // currentFirst moves the project matching the working directory to the front,
 // and reports whether one was found. The rest keep their order.
-func currentFirst(projects []agent.Project) ([]agent.Project, bool) {
-	cwd, err := os.Getwd()
-	if err != nil {
+//
+// The directory is passed in rather than read here. It was an ambient fact
+// reached for three levels below run, which is the same reason the writers are
+// passed: a caller cannot ask what this does from anywhere else.
+func currentFirst(projects []agent.Project, cwd string) ([]agent.Project, bool) {
+	if cwd == "" {
 		return projects, false
 	}
 	want := agent.NormalisePath(cwd)
@@ -553,4 +560,13 @@ func buildable() map[string]func(root string) agent.Source {
 		"claude-code": func(root string) agent.Source { return claude.Source{Root: root} },
 		"codex":       func(root string) agent.Source { return codex.Source{Root: root} },
 	}
+}
+
+// workingDir is where bough was run, or "" if the question cannot be answered.
+func workingDir() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	return cwd
 }
