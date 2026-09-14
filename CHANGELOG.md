@@ -7,6 +7,44 @@ Notable changes, newest first. Format follows
 
 Nothing yet.
 
+## 0.4.3 - 2026-09-15
+
+Codex token counts were roughly double. Everything here comes from a careful
+read of the code by [@brandon-fryslie](https://github.com/brandon-fryslie),
+who filed each finding with the line it lives on and a way to reproduce it.
+
+### Fixed
+
+- **Codex token counts were about twice what they should have been.** Codex
+  reports the cached tokens as part of the input rather than beside it, and
+  both numbers were being added. One real project read 3.04M tokens where the
+  answer was 1.59M. Anything that reads a token count was affected: the share
+  a piece of work took, the context multiple, the struggle score. Claude Code
+  numbers were never wrong, and neither was the ratio of re-read to written,
+  since both sides moved together.
+
+- A Codex commit was credited to whatever tool output arrived next. Codex runs
+  commands in parallel, so an unrelated command's exit code could decide
+  whether a commit counted, and a commit issued before the previous result
+  came back replaced it. Each commit is now settled by its own call.
+
+- A commit made after moving into a subdirectory, as `cd internal && git
+  commit`, was dropped. It is this repository's work and it is now kept. A
+  path that climbs out with `..` still is not.
+
+- Matching a commit to the repository depended on the order sessions happened
+  to be read in. Every pair is now weighed together and the closest settled
+  first, so the same history always reads the same way.
+
+- `--list` printed "0 prompts" for a project whose history could not be read,
+  which is what it prints for a project with nothing in it. It now says the
+  history could not be read.
+
+- A commit hash the transcript carried was cleared when the repository was
+  read and could not confirm it, and kept when the repository was never read
+  at all. Those cases are now told apart, so a machine without git no longer
+  looks the same as a repository that has moved on.
+
 ## 0.4.2 - 2026-09-13
 
 ### Added

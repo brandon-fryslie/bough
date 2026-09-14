@@ -351,6 +351,29 @@ carries a `response_id`, which is what lets a replayed response be recognised as
 one already counted, and the event carries no id at all. Older rollouts have
 only the event, so it still has to be read as a fallback.
 
+**Pair a tool call with its result by `call_id`.** Codex issues calls in
+parallel and the results come back interleaved, so the next output is often not
+the answer to the last call. Both the call and its output carry the same
+`call_id`, and that is the only thing joining them. Settle a `git commit` on
+whichever output arrives next and an unrelated command's exit code decides
+whether the commit counted.
+
+**The cached tokens are inside `input_tokens`, not beside them.** A usage
+record reads like four separate figures and is not:
+
+```json
+{"input_tokens":28739,"cached_input_tokens":28032,"output_tokens":11,"total_tokens":28750}
+```
+
+`total_tokens` is `input_tokens` plus `output_tokens`, which is what says the
+28,032 cached are part of the 28,739 rather than additional to them. Add
+`input_tokens` and `cached_input_tokens` together and you have counted the
+cache twice: on one real project that turned 1.59M tokens into 3.04M. The
+fresh input is `input_tokens - cached_input_tokens`, which here is 707.
+
+Claude Code reports these already separated, so a parser that reads both
+agents cannot use one rule for the pair.
+
 **A single user record holds several injected blocks.** The desktop app sends a
 plugin catalogue, the environment, the permissions and more as separate
 `input_text` chunks of one `user` message. Test only how the joined text begins
