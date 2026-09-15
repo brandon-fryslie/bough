@@ -381,3 +381,23 @@ func TestExtractTurnsSkipsMetaRecords(t *testing.T) {
 		t.Errorf("turn = %q", turns[0].Text)
 	}
 }
+
+// Work recorded before any prompt belongs to no turn, a commit included. The
+// commit is only held once a turn exists, so it neither counts nor reaches for
+// a turn that is not there.
+func TestCommitBeforeAnyPromptIsIgnored(t *testing.T) {
+	lines := []string{
+		`{"uuid":"1","type":"assistant","message":{"role":"assistant","content":[` +
+			`{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"git commit -m x"}}]}}`,
+		`{"uuid":"2","type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1"}]}}`,
+		`{"uuid":"3","type":"user","promptId":"p1","message":{"role":"user","content":[{"type":"text","text":"now start"}]}}`,
+	}
+	recs, err := ReadRecords(strings.NewReader(strings.Join(lines, "\n")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	turns := ExtractTurns(recs)
+	if len(turns) != 1 || len(turns[0].Committed) != 0 {
+		t.Errorf("got %+v, want one turn holding no commits", turns)
+	}
+}

@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"cmp"
 	"encoding/json"
 	"regexp"
 	"strconv"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/nickelsec/bough/internal/agent"
 	"github.com/nickelsec/bough/internal/agent/shell"
+	"github.com/nickelsec/bough/internal/agent/transcript"
 )
 
 var exitCodeRegex = regexp.MustCompile(`(?:Process exited with code|Command failed with exit code|Exit code:?)\s*(\d+)`)
@@ -17,25 +19,13 @@ var patchFileRegex = regexp.MustCompile(`(?m)^\*\*\*\s*(?:Add|Update|Delete)\s*F
 var execCmdRegex = regexp.MustCompile(`cmd:\s*"((?:\\.|[^"\\])*)"`)
 var execWorkdirRegex = regexp.MustCompile(`workdir:\s*"((?:\\.|[^"\\])*)"`)
 
-type pendingCommit struct {
-	turn  int
-	amend bool
-	dir   string
-}
-
 // ExtractTurns parses Codex rollout records into normalised agent.Turn instances.
 // Records are deduplicated by item ID to prevent inflated counts upon session replay.
 func ExtractTurns(recs []*Record) []agent.Turn {
 	var turns []agent.Turn
 	var cur *agent.Turn
 	var currentModel string
-	// Keyed by the call id the commit was issued under, the way the Claude
-	// source already does it. A single slot settled on the next tool output
-	// credited a commit to whatever finished next: with parallel calls the
-	// exit code of an unrelated command decided whether the commit counted,
-	// a second commit issued before the first result replaced it, and a
-	// result arriving after the next prompt was lost entirely.
-	pending := map[string]pendingCommit{}
+	commits := transcript.Commits{}
 
 	seenItems := make(map[string]bool)
 	seenUsage := make(map[string]bool)
@@ -87,7 +77,6 @@ func ExtractTurns(recs []*Record) []agent.Turn {
 				Models: map[string]int{},
 			})
 			cur = &turns[len(turns)-1]
-			clear(pending)
 			continue
 		}
 
@@ -114,9 +103,9 @@ func ExtractTurns(recs []*Record) []agent.Turn {
 
 			switch item.Type {
 			case "function_call", "custom_tool_call":
-				handleToolCall(cur, &item, len(turns)-1, pending)
+				handleToolCall(cur, &item, len(turns)-1, commits)
 			case "function_call_output", "custom_tool_call_output":
-				handleToolOutput(cur, &item, r.Time(), turns, pending)
+				handleToolOutput(cur, &item, r.Time(), turns, commits)
 			}
 		}
 	}
@@ -202,16 +191,16 @@ func handleTokenCount(cur *agent.Turn, r *Record, currentModel string, seen map[
 	}
 }
 
-func handleToolCall(cur *agent.Turn, item *ResponseItem, turnIdx int, pending map[string]pendingCommit) {
+func handleToolCall(cur *agent.Turn, item *ResponseItem, turnIdx int, commits transcript.Commits) {
 	cur.Tools[item.Name]++
 
 	switch item.Name {
 	case "apply_patch":
 		applyPatch(cur, item.Input)
 	case "exec":
-		handleExec(item.Input, item.CallID, turnIdx, pending)
+		handleExec(item.Input, item.CallID, turnIdx, commits)
 	case "exec_command", "shell_command":
-		handleCommand(item.Arguments, item.CallID, turnIdx, pending)
+		handleCommand(item.Arguments, item.CallID, turnIdx, commits)
 	case "spawn_agent":
 		handleSpawnAgent(cur, item.Arguments)
 	}
@@ -247,55 +236,24 @@ func applyPatch(cur *agent.Turn, input string) {
 		if i+1 < len(at) {
 			to = at[i+1][0]
 		}
-		if n := changed(input[m[1]:to]); n > 0 {
+		if n := transcript.ChangedLines(strings.Split(input[m[1]:to], "\n")); n > 0 {
 			cur.Lines[file] += n
 		}
 	}
 }
 
-// changed counts the lines a patch hunk adds or removes.
-//
-// The +++ and --- markers name files rather than change them, and the end of
-// the patch is punctuation, so none of those count.
-func changed(hunk string) int {
-	n := 0
-	for _, l := range strings.Split(hunk, "\n") {
-		switch {
-		case strings.HasPrefix(l, "+++"), strings.HasPrefix(l, "---"):
-		case strings.HasPrefix(l, "***"):
-		case strings.HasPrefix(l, "+"), strings.HasPrefix(l, "-"):
-			n++
-		}
+func handleExec(input, callID string, turnIdx int, commits transcript.Commits) {
+	call := transcript.Call{Turn: turnIdx, ID: callID}
+	if m := execCmdRegex.FindStringSubmatch(input); len(m) > 1 {
+		call.Command = strings.ReplaceAll(m[1], `\"`, `"`)
 	}
-	return n
+	if m := execWorkdirRegex.FindStringSubmatch(input); len(m) > 1 {
+		call.Workdir = strings.ReplaceAll(m[1], `\"`, `"`)
+	}
+	commits.Call(call)
 }
 
-func handleExec(input, callID string, turnIdx int, pending map[string]pendingCommit) {
-	cmdMatch := execCmdRegex.FindStringSubmatch(input)
-	cmd := ""
-	if len(cmdMatch) > 1 {
-		cmd = strings.ReplaceAll(cmdMatch[1], `\"`, `"`)
-	}
-	workdirMatch := execWorkdirRegex.FindStringSubmatch(input)
-	workdir := ""
-	if len(workdirMatch) > 1 {
-		workdir = shell.NormalisePath(strings.ReplaceAll(workdirMatch[1], `\"`, `"`))
-	}
-
-	if shell.IsCommit(cmd) {
-		cDir := shell.CommitDir(cmd)
-		if cDir == "" {
-			cDir = workdir
-		}
-		pending[callID] = pendingCommit{
-			turn:  turnIdx,
-			amend: shell.IsAmend(cmd),
-			dir:   cDir,
-		}
-	}
-}
-
-func handleCommand(args json.RawMessage, callID string, turnIdx int, pending map[string]pendingCommit) {
+func handleCommand(args json.RawMessage, callID string, turnIdx int, commits transcript.Commits) {
 	var parsed struct {
 		Cmd     string `json:"cmd"`
 		Command string `json:"command"`
@@ -310,26 +268,12 @@ func handleCommand(args json.RawMessage, callID string, turnIdx int, pending map
 			_ = json.Unmarshal(args, &parsed)
 		}
 	}
-	cmd := parsed.Cmd
-	if cmd == "" {
-		cmd = parsed.Command
-	}
-	cwd := shell.NormalisePath(parsed.Workdir)
-	if cwd == "" {
-		cwd = shell.NormalisePath(parsed.Cwd)
-	}
-
-	if shell.IsCommit(cmd) {
-		cDir := shell.CommitDir(cmd)
-		if cDir == "" {
-			cDir = cwd
-		}
-		pending[callID] = pendingCommit{
-			turn:  turnIdx,
-			amend: shell.IsAmend(cmd),
-			dir:   cDir,
-		}
-	}
+	commits.Call(transcript.Call{
+		Turn:    turnIdx,
+		ID:      callID,
+		Command: cmp.Or(parsed.Cmd, parsed.Command),
+		Workdir: cmp.Or(parsed.Workdir, parsed.Cwd),
+	})
 }
 
 func handleSpawnAgent(cur *agent.Turn, args json.RawMessage) {
@@ -364,7 +308,7 @@ func handleSpawnAgent(cur *agent.Turn, args json.RawMessage) {
 	})
 }
 
-func handleToolOutput(cur *agent.Turn, item *ResponseItem, at time.Time, turns []agent.Turn, pending map[string]pendingCommit) {
+func handleToolOutput(cur *agent.Turn, item *ResponseItem, at time.Time, turns []agent.Turn, commits transcript.Commits) {
 	outputStr := ""
 	var rawStr string
 	if err := json.Unmarshal(item.Output, &rawStr); err == nil {
@@ -392,30 +336,11 @@ func handleToolOutput(cur *agent.Turn, item *ResponseItem, at time.Time, turns [
 		cur.Errors++
 	}
 
-	// This output settles its own call and no other. An output carrying no
-	// call id cannot say which command it belongs to, so it settles nothing
-	// rather than guessing at whichever commit is outstanding.
-	p, held := pending[item.CallID]
-	if !held || item.CallID == "" {
-		return
-	}
-	delete(pending, item.CallID)
-
-	// A refused commit is not a commit. They are common: nothing staged, or a
-	// hook that said no.
-	if isError || p.turn < 0 || p.turn >= len(turns) {
-		return
-	}
-	c := agent.Commit{
-		Kind: "committed",
-		At:   at,
-		Dir:  p.dir,
-	}
-	if p.amend {
-		c.Kind = "amended"
-	}
+	// Codex keeps git's printout and nothing parsed from it, so the hash is
+	// read back out of that. It never says which kind of commit it saw.
+	res := transcript.Result{CallID: item.CallID, At: at, Failed: isError}
 	if sm := commitShaRegex.FindStringSubmatch(outputStr); len(sm) > 1 {
-		c.SHA = sm[1]
+		res.Reported.SHA = sm[1]
 	}
-	turns[p.turn].Committed = append(turns[p.turn].Committed, c)
+	commits.Settle(turns, res)
 }
