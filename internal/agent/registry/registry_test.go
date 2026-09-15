@@ -37,9 +37,11 @@ func TestSelectAcceptsEachFlagAndID(t *testing.T) {
 		}
 	}
 
-	got, err := Select("all")
-	if err != nil || len(got) != len(All()) {
-		t.Errorf("all selected %d agents, want %d (err %v)", len(got), len(All()), err)
+	for _, every := range []string{"all", ""} {
+		got, err := Select(every)
+		if err != nil || len(got) != len(All()) {
+			t.Errorf("%q selected %d agents, want %d (err %v)", every, len(got), len(All()), err)
+		}
 	}
 }
 

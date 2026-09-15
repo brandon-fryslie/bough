@@ -34,10 +34,11 @@ func Flags() []string {
 
 // Select reads an --agent value into the agents it names. An agent's ID is
 // accepted as well as its flag, since the listing shows the one and people
-// type the other.
+// type the other. An empty value is the flag left unset, as happens with
+// --agent="$AGENT" when the variable is, and reads every agent like the default.
 func Select(flag string) ([]agent.Agent, error) {
 	want := strings.ToLower(flag)
-	if want == everyAgent {
+	if want == everyAgent || want == "" {
 		return All(), nil
 	}
 	for _, a := range All() {
