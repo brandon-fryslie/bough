@@ -21,10 +21,11 @@
   <div class="mark-who">
     <div class="mark-title">
       <h1 id="name"></h1>
-      <!-- Which agent wrote this history. Filled in for every agent rather
-           than only the unfamiliar one: naming just the newcomer implies the
-           other is the default, which stopped being true at the second. -->
-      <span class="mark-agent" id="agent" hidden></span>
+      <!-- Which agent wrote this history, spelled by Go so the page and the
+           terminal cannot disagree. Filled in for every agent rather than only
+           the unfamiliar one: naming just the newcomer implies the other is the
+           default, which stopped being true at the second. -->
+      <span class="mark-agent" id="agent">{{.Agent}}</span>
     </div>
     <p class="where" id="where"></p>
   </div>

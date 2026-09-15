@@ -199,6 +199,11 @@ body.reading #stage { right: var(--drawer); }
 
 /* Quiet by design. It answers "which agent" for anyone who wonders and stays
    out of the way of the project name for everyone else. */
+/* A graph with no agent has no badge rather than an empty pill. */
+.mark-agent:empty {
+  display: none;
+}
+
 .mark-agent {
   font: 500 0.62rem/1 var(--mono);
   letter-spacing: 0.06em;

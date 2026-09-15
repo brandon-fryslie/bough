@@ -14,26 +14,21 @@ import (
 	"github.com/nickelsec/bough/internal/agent"
 )
 
-// Source reads Claude Code history.
-type Source struct {
-	// Root is where Claude Code keeps its projects. Empty means the usual
-	// location under the user's home directory.
-	Root string
+// Agent is Claude Code as the rest of bough knows it.
+func Agent() agent.Agent {
+	return agent.Agent{
+		ID:      "claude-code",
+		Flag:    "claude",
+		Name:    "Claude Code",
+		History: filepath.Join(".claude", "projects"),
+		Open:    func(root string) agent.Source { return Source{Root: root} },
+	}
 }
 
-// Name identifies this agent.
-func (Source) Name() string { return "claude-code" }
-
-// root resolves the directory to read from.
-func (s Source) root() (string, error) {
-	if s.Root != "" {
-		return s.Root, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".claude", "projects"), nil
+// Source reads Claude Code history.
+type Source struct {
+	// Root is where Claude Code keeps its projects.
+	Root string
 }
 
 // Detect reports the projects Claude Code has history for.
@@ -42,11 +37,7 @@ func (s Source) root() (string, error) {
 // has no projects, which lets a caller ask every agent it knows about without
 // special casing any of them.
 func (s Source) Detect() ([]agent.Project, error) {
-	root, err := s.root()
-	if err != nil {
-		return nil, err
-	}
-	entries, err := os.ReadDir(root)
+	entries, err := os.ReadDir(s.Root)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
@@ -59,7 +50,7 @@ func (s Source) Detect() ([]agent.Project, error) {
 		if !e.IsDir() {
 			continue
 		}
-		dir := filepath.Join(root, e.Name())
+		dir := filepath.Join(s.Root, e.Name())
 		transcripts, err := transcriptFiles(dir)
 		if err != nil || len(transcripts) == 0 {
 			continue
@@ -79,7 +70,7 @@ func (s Source) Detect() ([]agent.Project, error) {
 		projects = append(projects, agent.Project{
 			Name:       name,
 			Path:       path,
-			Source:     "claude-code",
+			Source:     Agent().ID,
 			Ref:        dir,
 			LastWorked: last,
 			Bytes:      size,

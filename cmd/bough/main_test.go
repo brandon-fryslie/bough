@@ -57,20 +57,26 @@ func TestAgentFlagClaude(t *testing.T) {
 	}
 }
 
-func TestAgentFlagCodex(t *testing.T) {
-	root := t.TempDir()
+// codexHistory writes a Codex rollout for one project under root.
+func codexHistory(t *testing.T, root, project string) {
+	t.Helper()
 	dayDir := filepath.Join(root, "2026", "08", "01")
 	if err := os.MkdirAll(dayDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	transcript := filepath.Join(dayDir, "rollout-s1.jsonl")
-	data := `{"type":"session_meta","payload":{"id":"s1","cwd":"/work/my-codex-project"}}
+	data := `{"type":"session_meta","payload":{"id":"s1","cwd":"/work/` + project + `"}}
 {"type":"item_meta","payload":{"id":"item-1","turn_id":"turn-1"}}
 {"type":"prompt","payload":{"text":"hello codex"}}
 `
 	if err := os.WriteFile(transcript, []byte(data), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestAgentFlagCodex(t *testing.T) {
+	root := t.TempDir()
+	codexHistory(t, root, "my-codex-project")
 
 	var out, errs bytes.Buffer
 	if err := run([]string{"--list", "--agent", "codex", "--root", root}, &out, &errs); err != nil {
@@ -143,16 +149,37 @@ func TestTextOutputIsReadable(t *testing.T) {
 }
 
 // Someone with no history should get an explanation, not a stack trace or an
-// empty screen.
+// empty screen, and the explanation names every place that was searched. It
+// used to name only Claude's, even when Codex had been looked for too.
 func TestMissingHistoryExplainsItself(t *testing.T) {
+	nothing := filepath.Join(t.TempDir(), "nothing")
 	var out, errs bytes.Buffer
-	err := run([]string{"--root", filepath.Join(t.TempDir(), "nothing")}, &out, &errs)
+	err := run([]string{"--root", nothing}, &out, &errs)
 
 	if err == nil {
 		t.Fatal("expected an error when there is no history")
 	}
-	if !strings.Contains(err.Error(), "no Claude Code history") {
-		t.Errorf("error should say what was looked for, got: %v", err)
+	for _, want := range []string{"Claude Code in " + nothing, "Codex in " + nothing} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should say it looked for %q, got: %v", want, err)
+		}
+	}
+}
+
+// --root means the same thing for every agent. It used to mean Claude's history
+// unless --agent was given as well, so a Codex root read as having nothing in it.
+func TestRootIsReadForEveryAgent(t *testing.T) {
+	root := history(t, "claude-project")
+	codexHistory(t, root, "codex-project")
+
+	var out, errs bytes.Buffer
+	if err := run([]string{"--list", "--root", root}, &out, &errs); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"claude-project", "[Claude Code]", "codex-project", "[Codex]"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("listing is missing %q:\n%s", want, out.String())
+		}
 	}
 }
 

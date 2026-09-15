@@ -19,8 +19,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/nickelsec/bough/internal/agent"
-	"github.com/nickelsec/bough/internal/agent/claude"
-	"github.com/nickelsec/bough/internal/agent/codex"
+	"github.com/nickelsec/bough/internal/agent/registry"
 	"github.com/nickelsec/bough/internal/banner"
 	"github.com/nickelsec/bough/internal/graph"
 	"github.com/nickelsec/bough/internal/pick"
@@ -89,14 +88,14 @@ func run(args []string, stdout, stderr io.Writer) error {
 		asText    = fs.Bool("text", false, "write to the terminal instead of opening a browser")
 		list      = fs.Bool("list", false, "list the projects with history and stop")
 		verbose   = fs.Bool("v", false, "include every prompt in the text output")
-		root      = fs.String("root", "", "read history from here instead of the usual location")
+		root      = fs.String("root", "", "read every agent's history from here instead of its usual location")
 		out       = fs.String("o", "", "write to this file instead of standard output")
 		showVer   = fs.Bool("version", false, "print the version and stop")
 		noRepo    = fs.Bool("no-repo", false, "do not read the project's git history")
-		agentFlag = fs.String("agent", "all", "which agent history to read: claude, codex, or all")
+		agentFlag = fs.String("agent", "all", "which agent history to read: "+strings.Join(registry.Flags(), ", "))
 	)
 	fs.Usage = func() {
-		fmt.Fprint(stderr, usage)
+		fmt.Fprintf(stderr, usage, strings.Join(registry.Flags(), ", "))
 		fs.PrintDefaults()
 	}
 	// Flags are accepted before or after the project name. The standard parser
@@ -114,46 +113,38 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return nil
 	}
 
-	var sources []agent.Source
-	switch strings.ToLower(*agentFlag) {
-	case "claude", "claude-code":
-		sources = []agent.Source{claude.Source{Root: *root}}
-	case "codex":
-		sources = []agent.Source{codex.Source{Root: *root}}
-	case "all", "":
-		if *root != "" {
-			// A custom root without an explicit --agent is a Claude history path,
-			// preserving existing flag semantics and isolated test runs.
-			sources = []agent.Source{claude.Source{Root: *root}}
-		} else {
-			sources = []agent.Source{
-				claude.Source{},
-				codex.Source{},
-			}
-		}
-	default:
-		return fmt.Errorf("unknown agent %q; supported: claude, codex, all", *agentFlag)
+	agents, err := registry.Select(*agentFlag)
+	if err != nil {
+		return err
 	}
 
-	sourcesMap := make(map[string]agent.Source, len(sources))
+	// [LAW:dataflow-not-control-flow] Every agent read goes through the same
+	// steps, so --root and the message for a machine with no history mean the
+	// same thing whichever agents were asked for.
+	sources := make(map[string]agent.Source, len(agents))
 	var projects []agent.Project
-	for _, s := range sources {
-		sourcesMap[s.Name()] = s
-		found, err := s.Detect()
+	var searched []string
+	for _, a := range agents {
+		dir, err := historyRoot(a, *root)
 		if err != nil {
-			return fmt.Errorf("reading %s history: %w", s.Name(), err)
+			return err
+		}
+		src := a.Open(dir)
+		sources[a.ID] = src
+		searched = append(searched, a.Name+" in "+dir)
+
+		found, err := src.Detect()
+		if err != nil {
+			return fmt.Errorf("reading %s history in %s: %w", a.Name, dir, err)
 		}
 		projects = append(projects, found...)
 	}
 	if len(projects) == 0 {
-		if len(sources) == 1 && sources[0].Name() == "codex" {
-			return errors.New("no Codex history found; looked in ~/.codex/sessions")
-		}
-		return errors.New("no Claude Code history found; looked in ~/.claude/projects")
+		return fmt.Errorf("no history found; looked for %s", strings.Join(searched, " and "))
 	}
 
 	if *list {
-		return writeList(stdout, sourcesMap, projects)
+		return writeList(stdout, sources, projects)
 	}
 
 	target, err := choose(projects, name, stderr)
@@ -161,11 +152,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	src := sourcesMap[target.Source]
-	if src == nil {
-		src = sources[0]
-	}
-	sessions, err := src.Sessions(target)
+	sessions, err := sources[target.Source].Sessions(target)
 	if err != nil {
 		// Some transcripts may be unreadable while others are fine, so say so
 		// and carry on with what did load.
@@ -202,6 +189,19 @@ func run(args []string, stdout, stderr io.Writer) error {
 	return graph.WriteText(w, g, *verbose)
 }
 
+// historyRoot is where to read an agent's history: the --root given, or the
+// agent's own place under the home directory when there was none.
+func historyRoot(a agent.Agent, override string) (string, error) {
+	if override != "" {
+		return override, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("finding %s history: %w", a.Name, err)
+	}
+	return filepath.Join(home, a.History), nil
+}
+
 // useBrowser decides between the page and the terminal.
 //
 // The page is the default because it is what the tool exists to show, but only
@@ -221,7 +221,7 @@ func browse(g graph.Graph, stderr io.Writer) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	err := server.Serve(ctx, g, func(url string) {
+	err := server.Serve(ctx, g, registry.Display(g.Project.Agent), func(url string) {
 		fmt.Fprintf(stderr, "bough is showing %s at %s\n", g.Project.Name, url)
 		fmt.Fprintf(stderr, "press ctrl-c when you are done\n")
 	})
@@ -369,7 +369,7 @@ func describe(p agent.Project) string {
 	// it. Naming only the unfamiliar one made the others look like the absence
 	// of an agent rather than a choice of one.
 	if p.Source != "" {
-		badge := "[" + agent.Display(p.Source) + "]"
+		badge := "[" + registry.Display(p.Source) + "]"
 		if detail != "" {
 			detail = badge + " " + detail
 		} else {
@@ -440,21 +440,17 @@ func writeList(w io.Writer, sources map[string]agent.Source, projects []agent.Pr
 	rows := make([]row, 0, len(projects))
 	var nameW, agentW, pathW int
 	for _, p := range projects {
-		src := sources[p.Source]
+		sessions, err := sources[p.Source].Sessions(p)
 		turns := 0
-		unread := false
-		if src != nil {
-			sessions, err := src.Sessions(p)
-			if err != nil {
-				unread = true
-			}
-			for _, s := range sessions {
-				turns += len(s.Turns)
-			}
+		for _, s := range sessions {
+			turns += len(s.Turns)
 		}
-		r := row{name: p.Name, path: p.Path, prompts: turns, unread: unread}
-		if p.Source != "" {
-			r.agent = "[" + agent.Display(p.Source) + "]"
+		r := row{
+			name:    p.Name,
+			agent:   "[" + registry.Display(p.Source) + "]",
+			path:    p.Path,
+			prompts: turns,
+			unread:  err != nil,
 		}
 		rows = append(rows, r)
 		nameW = wider(nameW, r.name)
@@ -498,7 +494,7 @@ const usage = `bough shows the shape of the work in a project's AI coding histor
   bough --json       write the graph as JSON
   bough --version    print the version
   bough --no-repo    leave the project's git history unread
-  bough --agent=codex read only a specific agent (claude, codex, all)
+  bough --agent=NAME  read one agent's history: %s
 
 Anything piped or redirected is written as text, so bough > notes.txt and
 bough | less behave as you would expect.

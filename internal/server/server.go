@@ -25,7 +25,11 @@ import (
 //
 // The address is reported through announce before the browser is opened, so a
 // terminal that cannot open one still tells the reader where to look.
-func Serve(ctx context.Context, g graph.Graph, announce func(url string)) error {
+//
+// agentName is the agent that wrote the history, spelled for a person. It is
+// passed in rather than looked up so that the page takes its names from the
+// same place the terminal does, without this package learning about agents.
+func Serve(ctx context.Context, g graph.Graph, agentName string, announce func(url string)) error {
 	// Port zero asks the operating system for a free one, which avoids both
 	// guessing and colliding with whatever else is running.
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -34,7 +38,7 @@ func Serve(ctx context.Context, g graph.Graph, announce func(url string)) error 
 	}
 	defer func() { _ = listener.Close() }()
 
-	page, err := render(g)
+	page, err := render(g, agentName)
 	if err != nil {
 		return err
 	}
@@ -99,7 +103,7 @@ func routes(page []byte) http.Handler {
 // the template package drags in reflection and the crypto tree behind its
 // contextual escaping. That cost eight megabytes of binary for four
 // replacements that need one escaping rule between them.
-func render(g graph.Graph) ([]byte, error) {
+func render(g graph.Graph, agentName string) ([]byte, error) {
 	parts := map[string]string{}
 	for _, name := range []string{"index.html", "fonts.css", "bough.css", "layout.js", "bough.js"} {
 		body, err := readAsset(name)
@@ -116,6 +120,7 @@ func render(g graph.Graph) ([]byte, error) {
 
 	replace := strings.NewReplacer(
 		"{{.Title}}", escapeHTML(g.Project.Name),
+		"{{.Agent}}", escapeHTML(agentName),
 		"{{.Fonts}}", parts["fonts.css"],
 		"{{.CSS}}", parts["bough.css"],
 		"{{.Layout}}", parts["layout.js"],
