@@ -17,25 +17,21 @@ import (
 
 const maxLine = 16 << 20
 
+// Agent is Codex CLI as the rest of bough knows it.
+func Agent() agent.Agent {
+	return agent.Agent{
+		ID:      "codex",
+		Flag:    "codex",
+		Name:    "Codex",
+		History: filepath.Join(".codex", "sessions"),
+		Open:    func(root string) agent.Source { return Source{Root: root} },
+	}
+}
+
 // Source reads OpenAI Codex CLI session history.
 type Source struct {
 	// Root is where Codex stores session rollouts.
-	// Empty means the default ~/.codex/sessions.
 	Root string
-}
-
-// Name identifies this agent source.
-func (Source) Name() string { return "codex" }
-
-func (s Source) root() (string, error) {
-	if s.Root != "" {
-		return s.Root, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".codex", "sessions"), nil
 }
 
 type projectGroup struct {
@@ -44,17 +40,13 @@ type projectGroup struct {
 
 // Detect reports all projects Codex CLI has history for.
 func (s Source) Detect() ([]agent.Project, error) {
-	root, err := s.root()
-	if err != nil {
-		return nil, err
-	}
-	if _, err := os.Stat(root); errors.Is(err, fs.ErrNotExist) {
+	if _, err := os.Stat(s.Root); errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
 
 	byPath := map[string]*projectGroup{}
 
-	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(s.Root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil //nolint:nilerr // skip inaccessible paths while discovering sessions
 		}
@@ -96,7 +88,7 @@ func (s Source) Detect() ([]agent.Project, error) {
 		projects = append(projects, agent.Project{
 			Name:       filepath.Base(pPath),
 			Path:       pPath,
-			Source:     "codex",
+			Source:     Agent().ID,
 			Ref:        string(refJSON),
 			LastWorked: last,
 			Bytes:      size,

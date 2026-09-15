@@ -13,11 +13,34 @@ package agent
 
 import "time"
 
-// Source is one coding agent that bough can read.
-type Source interface {
-	// Name identifies the agent, for example "claude-code".
-	Name() string
+// Agent is what bough knows about a coding agent before reading any of its
+// history: what it is called, where it keeps that history, and how to read it.
+//
+// Every view of an agent's identity reads it from here, the flag, the terminal
+// and the page alike. Spelling a name out anywhere else is how the page once
+// kept a table of its own that nothing checked against this one.
+type Agent struct {
+	// ID is how the history names its agent, for example "claude-code". It is
+	// what Project.Source and the graph carry.
+	ID string
 
+	// Flag is how --agent spells it, for example "claude".
+	Flag string
+
+	// Name is what a person reads, for example "Claude Code". "claude-code" is
+	// the name of a source; "Claude Code" is the name of a tool.
+	Name string
+
+	// History is where the agent keeps its history, relative to the home
+	// directory.
+	History string
+
+	// Open reads history kept under root.
+	Open func(root string) Source
+}
+
+// Source reads one coding agent's history from one place.
+type Source interface {
 	// Detect reports the projects this agent has history for on this machine.
 	// A source that is not installed returns no projects and no error.
 	Detect() ([]Project, error)
@@ -37,7 +60,7 @@ type Project struct {
 	// than from any directory name the agent may have mangled.
 	Path string
 
-	// Source names the agent this came from, as that agent's package spells it.
+	// Source is the ID of the agent this came from.
 	Source string
 
 	// Ref locates the project inside the agent's own storage. Its meaning is
@@ -75,25 +98,6 @@ type Session struct {
 	// alongside the parent says the person started two things when they started
 	// one.
 	ParentID string
-}
-
-// Display names an agent for a person to read.
-//
-// Source strings are what each agent's package calls itself and are not always
-// what somebody wants to see: "claude-code" is the name of a source, "Claude
-// Code" is the name of a tool. Both views ask here rather than spelling it
-// themselves, so the terminal and the page cannot drift apart.
-//
-// An agent nobody has named yet comes back as it was given, which is better
-// than an empty column.
-func Display(source string) string {
-	switch source {
-	case "claude-code":
-		return "Claude Code"
-	case "codex":
-		return "Codex"
-	}
-	return source
 }
 
 // Delegation is a unit of work the agent handed to a sub-agent.

@@ -14,40 +14,31 @@ import (
 // true while there was only one agent to read. It stopped being true at the
 // second.
 func TestThePageNamesTheAgent(t *testing.T) {
-	for _, agent := range []string{"claude-code", "codex"} {
+	for id, name := range map[string]string{"claude-code": "Claude Code", "codex": "Codex"} {
 		g := graph.Graph{
 			Schema:  graph.SchemaVersion,
-			Project: graph.Project{Name: "a project", Path: "/p", Agent: agent},
+			Project: graph.Project{Name: "a project", Path: "/p", Agent: id},
 		}
-		b, err := render(g)
+		b, err := render(g, name)
 		if err != nil {
 			t.Fatal(err)
 		}
-		body := string(b)
-
-		if !strings.Contains(body, `id="agent"`) {
-			t.Errorf("%s: the page has nowhere to put the agent's name", agent)
-		}
-		// The graph is inlined compact, so no space after the colon.
-		if !strings.Contains(body, `"agent":"`+agent+`"`) {
-			t.Errorf("%s: the graph reached the page without its agent", agent)
+		if !strings.Contains(string(b), `id="agent">`+name+`</span>`) {
+			t.Errorf("%s: the page does not name the agent", id)
 		}
 	}
 }
 
-// And it spells the agent the way a person reads it, matching agent.Display so
-// the page and the terminal cannot drift apart.
-func TestThePageSpellsAgentsLikeTheTerminal(t *testing.T) {
-	g := graph.Graph{Schema: graph.SchemaVersion, Project: graph.Project{Agent: "codex"}}
-	b, err := render(g)
+// And it spells the agent the way it was told, rather than from a table of its
+// own. The page once kept one, and an agent missing from it would have shown on
+// the page as something other than what the terminal called it.
+func TestThePageTakesAgentNamesFromGo(t *testing.T) {
+	g := graph.Graph{Schema: graph.SchemaVersion, Project: graph.Project{Agent: "pi"}}
+	b, err := render(g, "Pi <agent>")
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := string(b)
-
-	for _, want := range []string{`"Claude Code"`, `"Codex"`} {
-		if !strings.Contains(body, want) {
-			t.Errorf("the page cannot spell %s", want)
-		}
+	if !strings.Contains(string(b), `id="agent">Pi &lt;agent&gt;</span>`) {
+		t.Errorf("the page did not show the name it was given, escaped")
 	}
 }

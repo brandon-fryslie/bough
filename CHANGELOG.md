@@ -5,7 +5,19 @@ Notable changes, newest first. Format follows
 
 ## Unreleased
 
-Nothing yet.
+### Fixed
+
+- `--root` is read for every agent. Without `--agent` it used to mean Claude
+  Code's history only, so a Codex root listed nothing.
+- With no history found, the message names every agent and every place it
+  looked. It used to say only "no Claude Code history found; looked in
+  ~/.claude/projects", even when Codex had been searched too.
+
+### Changed
+
+- Each agent's ID, name, `--agent` spelling and history location are defined
+  once, in `internal/agent/registry` and that agent's own package. The page
+  gets the agent's name from Go and no longer keeps its own table.
 
 ## 0.4.3 - 2026-09-15
 

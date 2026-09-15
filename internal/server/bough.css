@@ -210,6 +210,11 @@ body.reading #stage { right: var(--drawer); }
   white-space: nowrap;
 }
 
+/* A graph with no agent has no badge rather than an empty pill. */
+.mark-agent:empty {
+  display: none;
+}
+
 .mark .where {
   margin: 0.15rem 0 0;
   font-size: 0.7rem;

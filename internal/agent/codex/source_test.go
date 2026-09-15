@@ -55,8 +55,8 @@ func TestDetectAndSessions(t *testing.T) {
 	if p.Path != filepath.Clean("/Users/alice/work/codex-app") {
 		t.Errorf("expected path '/Users/alice/work/codex-app', got %q", p.Path)
 	}
-	if p.Source != "codex" {
-		t.Errorf("expected source 'codex', got %q", p.Source)
+	if p.Source != Agent().ID {
+		t.Errorf("expected source %q, got %q", Agent().ID, p.Source)
 	}
 
 	sessions, err := src.Sessions(p)

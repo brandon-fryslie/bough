@@ -43,7 +43,7 @@ func start(t *testing.T, g graph.Graph) string {
 	t.Cleanup(cancel)
 
 	urls := make(chan string, 1)
-	go Serve(ctx, g, func(u string) { urls <- u })
+	go Serve(ctx, g, "Claude Code", func(u string) { urls <- u })
 
 	select {
 	case url := <-urls:
@@ -190,7 +190,7 @@ func TestShutdownIsClean(t *testing.T) {
 	urls := make(chan string, 1)
 	done := make(chan error, 1)
 
-	go func() { done <- Serve(ctx, sample(), func(u string) { urls <- u }) }()
+	go func() { done <- Serve(ctx, sample(), "Claude Code", func(u string) { urls <- u }) }()
 	<-urls
 	cancel()
 
