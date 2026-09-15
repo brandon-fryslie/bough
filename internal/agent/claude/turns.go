@@ -6,6 +6,7 @@ import (
 
 	"github.com/nickelsec/bough/internal/agent"
 	"github.com/nickelsec/bough/internal/agent/shell"
+	"github.com/nickelsec/bough/internal/agent/transcript"
 )
 
 // synthetic matches prompts the harness injected rather than the user typing.
@@ -96,10 +97,7 @@ func ExtractTurns(recs []*Record) []agent.Turn {
 	var turns []agent.Turn
 	var cur *agent.Turn
 
-	// Commit commands waiting on their result, keyed by tool call id. A commit
-	// only counts once the call comes back without an error, since plenty are
-	// refused for having nothing staged.
-	pending := map[string]pendingCommit{}
+	commits := transcript.Commits{}
 
 	// Edits waiting on their result, keyed the same way. The call names the
 	// file and the result says how much of it changed.
@@ -180,14 +178,9 @@ func ExtractTurns(recs []*Record) []agent.Turn {
 						Description: in.Description,
 					})
 				}
-				// Hold the commit until its result says whether it worked.
-				if in.Command != "" && b.ID != "" && shell.IsCommit(in.Command) {
-					pending[b.ID] = pendingCommit{
-						turn:  len(turns) - 1,
-						amend: shell.IsAmend(in.Command),
-						dir:   shell.CommitDir(in.Command),
-					}
-				}
+				// Claude Code's shell tool records no directory, so a commit
+				// is placed only by where its command moved.
+				commits.Call(transcript.Call{Turn: len(turns) - 1, ID: b.ID, Command: in.Command})
 				p := shell.NormalisePath(in.path())
 				if p == "" {
 					continue
@@ -206,30 +199,12 @@ func ExtractTurns(recs []*Record) []agent.Turn {
 					cur.Errors++
 				}
 				recordLines(turns, edited, b, r)
-				p, held := pending[b.ToolUseID]
-				if !held {
-					continue
-				}
-				delete(pending, b.ToolUseID)
-				// A refused commit is not a commit. They are common: nothing
-				// staged, or a hook that said no.
-				if b.IsError || p.turn < 0 || p.turn >= len(turns) {
-					continue
-				}
-				c := agent.Commit{Kind: "committed", At: r.Time(), Dir: p.dir}
-				if p.amend {
-					c.Kind = "amended"
-				}
-				// The hash only exists when Claude Code managed to read it back
-				// out of git's own output, which a quiet commit denies it.
-				if got := r.Commit(); got != nil {
-					c.SHA = got.SHA
-					c.Branch = got.Branch
-					if got.Kind != "" {
-						c.Kind = got.Kind
-					}
-				}
-				turns[p.turn].Committed = append(turns[p.turn].Committed, c)
+				commits.Settle(turns, transcript.Result{
+					CallID:   b.ToolUseID,
+					At:       r.Time(),
+					Failed:   b.IsError,
+					Reported: r.Reported(),
+				})
 			}
 		}
 	}
@@ -306,11 +281,4 @@ func recordLines(turns []agent.Turn, edited map[string]editedFile, b Block, r *R
 type editedFile struct {
 	turn int
 	path string
-}
-
-// pendingCommit is a commit command waiting to hear whether it worked.
-type pendingCommit struct {
-	turn  int
-	amend bool
-	dir   string
 }

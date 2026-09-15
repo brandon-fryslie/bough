@@ -3,6 +3,8 @@ package claude
 import (
 	"strings"
 	"testing"
+
+	"github.com/nickelsec/bough/internal/agent/transcript"
 )
 
 // Message content arrives as a list of blocks most of the time and as a bare
@@ -78,32 +80,29 @@ func TestToolUseResultAcceptsBothShapes(t *testing.T) {
 		t.Fatalf("got %d records, want 3 (a string result must not lose the line)", len(recs))
 	}
 
-	if c := recs[0].Commit(); c != nil {
+	if c := recs[0].Reported(); c != (transcript.Reported{}) {
 		t.Errorf("string result reported a commit: %+v", c)
 	}
-	if c := recs[1].Commit(); c != nil {
+	if c := recs[1].Reported(); c != (transcript.Reported{}) {
 		t.Errorf("result without a git operation reported a commit: %+v", c)
 	}
 
-	c := recs[2].Commit()
-	if c == nil {
-		t.Fatal("no commit read from a record that carries one")
-	}
-	if c.SHA != "d0a65cc" || c.Kind != "committed" || c.Branch != "main" {
-		t.Errorf("got %+v, want sha d0a65cc, kind committed, branch main", *c)
+	want := transcript.Reported{SHA: "d0a65cc", Kind: "committed", Branch: "main"}
+	if c := recs[2].Reported(); c != want {
+		t.Errorf("got %+v, want %+v", c, want)
 	}
 }
 
 // A commit with no hash is not checkable against a repository, which is the
 // only reason to record one at all.
 func TestCommitNeedsAHash(t *testing.T) {
-	line := `{"uuid":"a","type":"user","toolUseResult":{"gitOperation":{"commit":{"kind":"committed"}}}}`
+	line := `{"uuid":"a","type":"user","toolUseResult":{"gitOperation":{"commit":{"kind":"amended"}}}}`
 	recs, err := ReadRecords(strings.NewReader(line))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c := recs[0].Commit(); c != nil {
-		t.Errorf("got %+v, want nil for a commit with no sha", c)
+	if c := recs[0].Reported(); c != (transcript.Reported{}) {
+		t.Errorf("got %+v, want nothing reported for a commit with no sha", c)
 	}
 }
 

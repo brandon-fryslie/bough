@@ -346,3 +346,25 @@ func TestFailedCommitIsNotCounted(t *testing.T) {
 		t.Errorf("got %d commits, want 0: the commit was refused", n)
 	}
 }
+
+// A commit whose result lands after the next prompt still belongs to the turn
+// that issued it. Opening a prompt used to forget every commit still waiting,
+// so this one was lost; Claude has always kept them.
+func TestCommitResultAfterTheNextPromptStillCounts(t *testing.T) {
+	recs := []*Record{
+		userMessage("m1", "commit it"),
+		raw("response_item", `{"type":"function_call","id":"f1","call_id":"c1","name":"exec_command","arguments":"{\"cmd\":\"git commit -m x\",\"workdir\":\"/w\"}"}`),
+		userMessage("m2", "and then the docs"),
+		raw("response_item", `{"type":"function_call_output","call_id":"c1","output":"Process exited with code 0\n[main abc1234] x"}`),
+	}
+	turns := ExtractTurns(recs)
+	if len(turns) != 2 {
+		t.Fatalf("got %d turns, want 2", len(turns))
+	}
+	if n := len(turns[0].Committed); n != 1 {
+		t.Errorf("first turn holds %d commits, want 1", n)
+	}
+	if n := len(turns[1].Committed); n != 0 {
+		t.Errorf("second turn holds %d commits, want 0", n)
+	}
+}

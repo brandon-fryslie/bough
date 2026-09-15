@@ -12,12 +12,23 @@ Notable changes, newest first. Format follows
 - With no history found, the message names every agent and every place it
   looked. It used to say only "no Claude Code history found; looked in
   ~/.claude/projects", even when Codex had been searched too.
+- A Codex commit whose result arrived after the next prompt was dropped. It
+  now counts, on the turn that made it, as Claude Code commits always have.
+- A changed line whose own text opens with the sign, such as adding `++i;`,
+  counts as changed in a Codex patch. It was being skipped as a file header,
+  which that format never writes.
 
 ### Changed
 
 - Each agent's ID, name, `--agent` spelling and history location are defined
   once, in `internal/agent/registry` and that agent's own package. The page
   gets the agent's name from Go and no longer keeps its own table.
+- What counts as a commit, which result settles which call, how the commit is
+  built, how many lines a diff changed and which day a timestamp belongs to
+  are decided once, in `internal/agent/transcript`. Claude Code and Codex each
+  had a copy, and the copies had drifted. Where the agents really record
+  different things, such as the directory a command ran in, each supplies
+  that as an input.
 
 ## 0.4.3 - 2026-09-15
 
