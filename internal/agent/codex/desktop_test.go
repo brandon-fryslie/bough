@@ -368,3 +368,18 @@ func TestCommitResultAfterTheNextPromptStillCounts(t *testing.T) {
 		t.Errorf("second turn holds %d commits, want 0", n)
 	}
 }
+
+// Work recorded before any prompt belongs to no turn, a commit included. The
+// commit is only held once a turn exists, so it neither counts nor reaches for
+// a turn that is not there.
+func TestCommitBeforeAnyPromptIsIgnored(t *testing.T) {
+	recs := []*Record{
+		raw("response_item", `{"type":"function_call","id":"f1","call_id":"c1","name":"exec_command","arguments":"{\"cmd\":\"git commit -m x\",\"workdir\":\"/w\"}"}`),
+		raw("response_item", `{"type":"function_call_output","call_id":"c1","output":"Process exited with code 0\n[main abc1234] x"}`),
+		userMessage("m1", "now start"),
+	}
+	turns := ExtractTurns(recs)
+	if len(turns) != 1 || len(turns[0].Committed) != 0 {
+		t.Errorf("got %+v, want one turn holding no commits", turns)
+	}
+}
