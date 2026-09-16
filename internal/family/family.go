@@ -20,7 +20,10 @@
 // Nothing else joins them. Two directories that merely contain one another
 // stay apart: /Users/bmf and /Users/bmf/code both have history and contain
 // everything, and joining them would fold every project into the home
-// directory. Sharing a name is nothing at all.
+// directory. Sharing a name is nothing at all. The repository rule is the one
+// that could override this, and does: a home directory that is itself a
+// checkout is one project by these rules, with everything under it that is
+// not a repository of its own.
 //
 // This package computes; it does not read. Git and the disk are asked through
 // Disk, which the edge supplies, so every rule here is testable from a table.
@@ -155,8 +158,8 @@ var absolute = regexp.MustCompile(`^(?:/|[A-Za-z]:/)`)
 // pair of directories each recorded as made for the other cannot chase one
 // another forever.
 func (r *Resolver) resolve(p string, followed map[string]bool) Family {
-	// [LAW:dataflow-not-control-flow] Three questions, always in this order,
-	// each answered by the nearest directory that can answer it.
+	// Three questions, always in this order, each answered by the nearest
+	// directory that can answer it.
 	//
 	// The agent's record comes first. A scratchpad is where a session
 	// experiments, and nine on the history this was built against had a
@@ -206,22 +209,21 @@ func (r *Resolver) recorded(k *known, followed map[string]bool) (Family, bool) {
 	}
 	followed[key] = true
 
-	var matched []*known
-	for candidate, other := range r.known {
-		if candidate == key {
-			continue
-		}
-		for _, serves := range k.serves {
-			if serves(other.path) {
-				matched = append(matched, other)
-				break
+	matched := map[string]*known{}
+	for _, serves := range k.serves {
+		for candidate, other := range r.known {
+			if candidate != key && serves(other.path) {
+				matched[candidate] = other
 			}
 		}
 	}
 	if len(matched) != 1 {
 		return Family{}, false
 	}
-	return r.resolve(matched[0].path, followed), true
+	for _, other := range matched {
+		return r.resolve(other.path, followed), true
+	}
+	return Family{}, false
 }
 
 // slashed puts a path into the form the walk runs on: one separator, case

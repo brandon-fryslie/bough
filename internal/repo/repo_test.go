@@ -102,6 +102,20 @@ func TestReadAgainstARealRepository(t *testing.T) {
 	}
 }
 
+// Everything git would read from the environment about where a repository is
+// goes; what it needs to run stays.
+func TestWithoutGitEnv(t *testing.T) {
+	got := withoutGitEnv([]string{
+		"HOME=/Users/bmf", "GIT_DIR=/elsewhere/.git", "GIT_WORK_TREE=/elsewhere",
+		"GIT_CEILING_DIRECTORIES=/Users", "GIT_OBJECT_DIRECTORY=/q",
+		"GIT_EXEC_PATH=/opt/git/libexec", "GIT_TRACE=1", "GIT_CONFIG_GLOBAL=/x/gitconfig",
+	})
+	want := []string{"HOME=/Users/bmf", "GIT_EXEC_PATH=/opt/git/libexec", "GIT_TRACE=1", "GIT_CONFIG_GLOBAL=/x/gitconfig"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("kept %v, want %v", got, want)
+	}
+}
+
 func writeFile(dir, name, body string) error {
 	return os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600)
 }
@@ -172,6 +186,15 @@ func TestDiskNamesTheMainTree(t *testing.T) {
 			t.Errorf("MainTree(%q) = %q, want %q", dir, got, want)
 		}
 	}
+	// A bare repository lists itself first; its first checkout is the tree.
+	bare := filepath.Join(base, "bare.git")
+	bareTree := filepath.Join(base, "bare-checkout")
+	run(base, "clone", "-q", "--bare", main, bare)
+	run(bare, "worktree", "add", "-q", bareTree, "-b", "checkout")
+	if got := d.MainTree(bareTree); got == "" || strings.HasSuffix(got, ".git") {
+		t.Errorf("MainTree of a bare repository's checkout = %q, want the checkout", got)
+	}
+
 	subTree := d.MainTree(filepath.Join(main, "vendor", "sub"))
 	if subTree == "" || strings.Contains(subTree, ".git") || !strings.HasSuffix(subTree, filepath.Join("vendor", "sub")) {
 		t.Errorf("MainTree of a submodule = %q, want its own checkout", subTree)

@@ -128,9 +128,10 @@ func run(dir string, args ...string) (string, error) {
 	// and it comes from the transcript rather than from anything a caller typed.
 	cmd := exec.Command("git", full...)
 	// A repository named in the environment would answer for every directory
-	// asked about. Git hooks export GIT_DIR, and a bare-dotfiles alias sets
-	// both it and GIT_WORK_TREE, so bough launched from either would read one
-	// repository's history whatever path it was handed.
+	// asked about. Git hooks export GIT_DIR and an object store, and a
+	// bare-dotfiles alias sets GIT_DIR and GIT_WORK_TREE, so bough launched
+	// from either would read one repository's history whatever path it was
+	// handed.
 	cmd.Env = withoutGitEnv(os.Environ())
 	out, err := cmd.Output()
 	if err != nil {
@@ -139,19 +140,28 @@ func run(dir string, args ...string) (string, error) {
 	return string(out), nil
 }
 
-// withoutGitEnv drops the variables that point git at a repository other
-// than the one in the directory it is run in.
+// withoutGitEnv drops every variable that would point git somewhere other
+// than the directory it is run in: a repository, a work tree, an object store,
+// a ceiling on discovery. What stays is what a local read needs to run at all,
+// which is where git is installed and how it finds its configuration.
 func withoutGitEnv(env []string) []string {
 	kept := env[:0:0]
 	for _, kv := range env {
 		name, _, _ := strings.Cut(kv, "=")
-		switch name {
-		case "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE":
+		if strings.HasPrefix(name, "GIT_") && !gitEnvKept(name) {
 			continue
 		}
 		kept = append(kept, kv)
 	}
 	return kept
+}
+
+func gitEnvKept(name string) bool {
+	switch name {
+	case "GIT_EXEC_PATH", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM":
+		return true
+	}
+	return strings.HasPrefix(name, "GIT_TRACE")
 }
 
 func atoi(s string) int {

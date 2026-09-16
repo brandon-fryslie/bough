@@ -2,6 +2,8 @@ package repo
 
 import (
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -49,8 +51,7 @@ func (d *Disk) MainTree(dir string) string {
 }
 
 func mainTree(dir string) string {
-	out, err := run(dir, "rev-parse", "--path-format=absolute",
-		"--show-toplevel", "--git-dir", "--git-common-dir")
+	out, err := run(dir, "rev-parse", "--show-toplevel", "--git-dir", "--git-common-dir")
 	if err != nil {
 		return ""
 	}
@@ -58,7 +59,9 @@ func mainTree(dir string) string {
 	if len(lines) != 3 {
 		return ""
 	}
-	top, gitDir, common := lines[0], lines[1], lines[2]
+	// Only the top level is always absolute; the two git directories are
+	// written relative to dir when they sit inside it.
+	top, gitDir, common := lines[0], absolute(dir, lines[1]), absolute(dir, lines[2])
 	if gitDir == common {
 		return top
 	}
@@ -66,7 +69,23 @@ func mainTree(dir string) string {
 	if err != nil {
 		return ""
 	}
-	first, _, _ := strings.Cut(out, "\n")
-	tree, _ := strings.CutPrefix(first, "worktree ")
-	return tree
+	// The main tree is listed first, unless the repository is bare, when its
+	// git directory is listed first and marked so; the first checkout is the
+	// nearest thing to a main tree that repository has.
+	for _, stanza := range strings.Split(out, "\n\n") {
+		lines := strings.Split(stanza, "\n")
+		if slices.Contains(lines, "bare") {
+			continue
+		}
+		tree, _ := strings.CutPrefix(lines[0], "worktree ")
+		return tree
+	}
+	return ""
+}
+
+func absolute(dir, p string) string {
+	if filepath.IsAbs(p) {
+		return filepath.Clean(p)
+	}
+	return filepath.Join(dir, p)
 }
