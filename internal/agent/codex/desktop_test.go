@@ -102,8 +102,35 @@ func TestDelegatedTaskOpensATurn(t *testing.T) {
 	if len(turns) != 1 {
 		t.Fatalf("got %d turns, want 1: a sub-agent's work went missing", len(turns))
 	}
-	if got := turns[0].Text; got != "/root/pixel_art" {
-		t.Errorf("label = %q, want the task name", got)
+	// Nobody typed anything. The envelope is not a prompt, and the task's name
+	// has its own field rather than standing in for one.
+	if got := turns[0].Text; got != "" {
+		t.Errorf("text = %q, want empty: a sub-agent's turn has no prompt", got)
+	}
+	if got := turns[0].TaskName; got != "/root/pixel_art" {
+		t.Errorf("task name = %q, want /root/pixel_art", got)
+	}
+}
+
+// Where the record names nothing, nothing is named. A stand-in such as
+// "delegated task" or "subagent" reads as something the record contained.
+func TestUnnamedDelegationIsLeftEmpty(t *testing.T) {
+	recs := []*Record{
+		userMessage("m1", "build it"),
+		raw("response_item", `{"type":"function_call","id":"f1","name":"spawn_agent","arguments":"{\"message\":\"draw\"}"}`),
+		// The name is blank, and the header after it must not be read as one.
+		raw("response_item", `{"type":"agent_message","id":"a1","content":[{"type":"input_text","text":"Message Type: NEW_TASK\nTask name:\nSender: /root\n"}]}`),
+	}
+
+	turns := ExtractTurns(recs)
+	if len(turns) != 2 || len(turns[0].Delegated) != 1 {
+		t.Fatalf("got %d turns, want the prompt and the handed-over task", len(turns))
+	}
+	if d := turns[0].Delegated[0]; d.Kind != "" || d.Name != "" {
+		t.Errorf("kind = %q, name = %q, want both empty: the spawn named neither", d.Kind, d.Name)
+	}
+	if got := turns[1]; got.Text != "" || got.TaskName != "" {
+		t.Errorf("text = %q, task name = %q, want both empty: nobody typed or named it", got.Text, got.TaskName)
 	}
 }
 
@@ -146,8 +173,13 @@ func TestEncryptedBriefIsNotShown(t *testing.T) {
 	if d.Description != "" {
 		t.Errorf("description = %q, want empty: ciphertext must not be shown", d.Description)
 	}
-	if d.Kind != "pixel_art" {
-		t.Errorf("kind = %q, want the task name", d.Kind)
+	// Codex named the task and not the sort of sub-agent, and each fact stays
+	// in its own field.
+	if d.Name != "pixel_art" {
+		t.Errorf("name = %q, want the task name", d.Name)
+	}
+	if d.Kind != "" {
+		t.Errorf("kind = %q, want empty: no sort of sub-agent was recorded", d.Kind)
 	}
 }
 

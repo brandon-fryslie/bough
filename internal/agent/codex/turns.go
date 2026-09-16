@@ -63,18 +63,18 @@ func ExtractTurns(recs []*Record) []agent.Turn {
 				seenItems[item.ID] = true
 			}
 
-			text := r.PromptText()
-			if r.IsNewTask() {
-				text = r.AgentTaskText()
-			}
+			// A sub-agent's request was handed over, not typed, so it has a
+			// task name and no prompt. The two readers each answer empty for
+			// the kind of request they do not recognise.
 			turns = append(turns, agent.Turn{
-				At:     r.Time(),
-				Text:   text,
-				Tools:  map[string]int{},
-				Files:  map[string]int{},
-				Edits:  map[string]int{},
-				Lines:  map[string]int{},
-				Models: map[string]int{},
+				At:       r.Time(),
+				Text:     r.PromptText(),
+				TaskName: r.TaskName(),
+				Tools:    map[string]int{},
+				Files:    map[string]int{},
+				Edits:    map[string]int{},
+				Lines:    map[string]int{},
+				Models:   map[string]int{},
 			})
 			cur = &turns[len(turns)-1]
 			continue
@@ -288,13 +288,6 @@ func handleSpawnAgent(cur *agent.Turn, args json.RawMessage) {
 	} else {
 		_ = json.Unmarshal(args, &parsed)
 	}
-	kind := parsed.AgentType
-	if kind == "" {
-		kind = parsed.TaskName
-	}
-	if kind == "" {
-		kind = "subagent"
-	}
 	// The brief is encrypted when one agent spawns another, so there is nothing
 	// to show. The delegation is still recorded: that the work was handed off is
 	// worth knowing even when what was asked for is not readable.
@@ -303,7 +296,8 @@ func handleSpawnAgent(cur *agent.Turn, args json.RawMessage) {
 		desc = ""
 	}
 	cur.Delegated = append(cur.Delegated, agent.Delegation{
-		Kind:        kind,
+		Kind:        parsed.AgentType,
+		Name:        parsed.TaskName,
 		Description: desc,
 	})
 }

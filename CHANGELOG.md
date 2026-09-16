@@ -20,6 +20,14 @@ Notable changes, newest first. Format follows
 
 ### Changed
 
+- A delegation keeps the sort of sub-agent in `kind`, the task's name in
+  `name` and the brief in `description`, whichever agent recorded it. Codex
+  used to put its task name in `kind`, or the literal "subagent" when it named
+  nothing, so the same field meant different things per agent. A Codex
+  sub-agent's turn has an empty `text` and its task name in `task`, where it
+  used to carry the name, or the literal "delegated task", as though someone
+  had typed it. Schema goes to 2. A hand-off now shows every fact recorded,
+  for example "Explore · Research the fonts".
 - Each agent's ID, name, `--agent` spelling and history location are defined
   once, in `internal/agent/registry` and that agent's own package. The page
   gets the agent's name from Go and no longer keeps its own table.

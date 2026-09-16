@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"cmp"
 	"fmt"
 	"io"
 	"path"
@@ -105,8 +106,15 @@ func WriteText(w io.Writer, g Graph, verbose bool) error {
 
 			if verbose {
 				for _, turn := range task.Turns {
+					// A turn another agent handed over has no prompt, so it is
+					// shown by its task's name, marked so it does not read as
+					// something the person typed.
+					said := turn.Text
+					if turn.Task != "" {
+						said = "task from an agent: " + turn.Task
+					}
 					fmt.Fprintf(w, "      %s  %s\n",
-						turn.At.Format("02 Jan 15:04"), oneLine(turn.Text, 60))
+						turn.At.Format("02 Jan 15:04"), oneLine(said, 60))
 					for _, d := range turn.Delegated {
 						fmt.Fprintf(w, "                      handed off: %s\n", handoff(d))
 					}
@@ -244,13 +252,18 @@ func models(m map[string]int) string {
 
 // handoff names a piece of delegated work.
 //
-// Agents differ in what they record. Claude writes a brief before handing work
-// over, and that describes it. Codex encrypts the brief and leaves only the
-// name of the sub-agent, so the name is what there is to show. Printing the
-// description alone left a bare "handed off:" with nothing after it.
+// Every fact the agent recorded is shown, in the order a reader wants them:
+// the sort of sub-agent, the task's name, then the brief. Agents record
+// different subsets, Claude a sort and a brief and Codex a name and sometimes a
+// sort, and none of them stands in for a missing other.
 func handoff(d Delegation) string {
-	if d.Description != "" {
-		return d.Description
+	var said []string
+	for _, fact := range []string{d.Kind, d.Name, d.Description} {
+		if fact != "" {
+			said = append(said, fact)
+		}
 	}
-	return d.Kind
+	// Recording nothing does not make the hand-off disappear: that work was
+	// handed off is worth showing even when nothing says what it was.
+	return cmp.Or(strings.Join(said, " · "), "(unnamed)")
 }

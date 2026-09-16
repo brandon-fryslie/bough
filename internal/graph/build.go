@@ -208,6 +208,7 @@ func turnsOf(turns []agent.Turn) []Turn {
 		row := Turn{
 			At:     t.At,
 			Text:   t.Text,
+			Task:   t.TaskName,
 			Files:  len(t.Files),
 			Errors: t.Errors,
 		}
@@ -215,7 +216,7 @@ func turnsOf(turns []agent.Turn) []Turn {
 			row.Edits += n
 		}
 		for _, d := range t.Delegated {
-			row.Delegated = append(row.Delegated, Delegation{Kind: d.Kind, Description: d.Description})
+			row.Delegated = append(row.Delegated, Delegation{Kind: d.Kind, Name: d.Name, Description: d.Description})
 		}
 		for _, c := range t.Committed {
 			row.Committed = append(row.Committed, commitOf(c))

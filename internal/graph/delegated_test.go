@@ -24,6 +24,14 @@ func spent(when int, text string, in, out int) agent.Turn {
 	}
 }
 
+// handed is a sub-agent's turn: another agent handed the work over by name, so
+// there is no prompt.
+func handed(when int, task string, in, out int) agent.Turn {
+	t := spent(when, "", in, out)
+	t.TaskName = task
+	return t
+}
+
 // A sub-agent runs inside one turn of the session that spawned it. Left as a
 // session of its own it became a second goal, which put a second date heading
 // on a single afternoon.
@@ -37,10 +45,10 @@ func TestDelegatedWorkJoinsTheTurnThatAskedForIt(t *testing.T) {
 		spent(38, "change the fonts", 50, 5),
 		spent(44, "give it a cooler name", 20, 2),
 	}}
-	parent.Turns[0].Delegated = []agent.Delegation{{Kind: "pixel_art"}}
+	parent.Turns[0].Delegated = []agent.Delegation{{Name: "pixel_art"}}
 
 	child := agent.Session{ID: "C", ParentID: "S", Turns: []agent.Turn{
-		spent(31, "/root/pixel_art", 40, 4),
+		handed(31, "/root/pixel_art", 40, 4),
 	}}
 
 	got := fold([]agent.Session{parent, child})
@@ -67,8 +75,8 @@ func TestDelegatedWorkJoinsTheTurnThatAskedForIt(t *testing.T) {
 // answering the prompt cost.
 func TestFoldKeepsEveryToken(t *testing.T) {
 	parent := agent.Session{ID: "S", Turns: []agent.Turn{spent(30, "build it", 100, 10)}}
-	parent.Turns[0].Delegated = []agent.Delegation{{Kind: "art"}}
-	child := agent.Session{ID: "C", ParentID: "S", Turns: []agent.Turn{spent(31, "/root/art", 40, 4)}}
+	parent.Turns[0].Delegated = []agent.Delegation{{Name: "art"}}
+	child := agent.Session{ID: "C", ParentID: "S", Turns: []agent.Turn{handed(31, "/root/art", 40, 4)}}
 
 	var in, out int
 	for _, s := range fold([]agent.Session{parent, child}) {
@@ -87,15 +95,31 @@ func TestFoldKeepsEveryToken(t *testing.T) {
 // delegation and must not be drawn as two.
 func TestOneDelegationIsNotShownTwice(t *testing.T) {
 	parent := agent.Session{ID: "S", Turns: []agent.Turn{spent(30, "build it", 100, 10)}}
-	parent.Turns[0].Delegated = []agent.Delegation{{Kind: "pixel_art"}}
-	child := agent.Session{ID: "C", ParentID: "S", Turns: []agent.Turn{spent(31, "/root/pixel_art", 40, 4)}}
+	parent.Turns[0].Delegated = []agent.Delegation{{Name: "pixel_art"}}
+	child := agent.Session{ID: "C", ParentID: "S", Turns: []agent.Turn{handed(31, "/root/pixel_art", 40, 4)}}
 
 	got := fold([]agent.Session{parent, child})
 	if n := len(got[0].Turns[0].Delegated); n != 1 {
 		t.Fatalf("got %d hand-offs, want 1", n)
 	}
-	if kind := got[0].Turns[0].Delegated[0].Kind; kind != "pixel_art" {
-		t.Errorf("kind = %q, want the name from the spawn call", kind)
+	if name := got[0].Turns[0].Delegated[0].Name; name != "pixel_art" {
+		t.Errorf("name = %q, want the name from the spawn call", name)
+	}
+}
+
+// A spawn call that recorded only the sort of sub-agent learns the task's name
+// from the sub-agent's own transcript, and the sort stays what it was.
+func TestTaskNameComesFromTheSubAgent(t *testing.T) {
+	parent := agent.Session{ID: "S", Turns: []agent.Turn{spent(30, "build it", 100, 10)}}
+	parent.Turns[0].Delegated = []agent.Delegation{{Kind: "worker"}}
+	child := agent.Session{ID: "C", ParentID: "S", Turns: []agent.Turn{handed(31, "/root/pixel_art", 40, 4)}}
+
+	got := fold([]agent.Session{parent, child})[0].Turns[0].Delegated
+	if len(got) != 1 {
+		t.Fatalf("got %d hand-offs, want 1", len(got))
+	}
+	if got[0].Kind != "worker" || got[0].Name != "/root/pixel_art" {
+		t.Errorf("kind = %q, name = %q, want worker and /root/pixel_art", got[0].Kind, got[0].Name)
 	}
 }
 
@@ -104,8 +128,8 @@ func TestOneDelegationIsNotShownTwice(t *testing.T) {
 // sitting "/root/pixel_art".
 func TestTaskNameIsNotTreatedAsABrief(t *testing.T) {
 	parent := agent.Session{ID: "S", Turns: []agent.Turn{spent(30, "build it", 100, 10)}}
-	parent.Turns[0].Delegated = []agent.Delegation{{Kind: "pixel_art"}}
-	child := agent.Session{ID: "C", ParentID: "S", Turns: []agent.Turn{spent(31, "/root/pixel_art", 40, 4)}}
+	parent.Turns[0].Delegated = []agent.Delegation{{Name: "pixel_art"}}
+	child := agent.Session{ID: "C", ParentID: "S", Turns: []agent.Turn{handed(31, "/root/pixel_art", 40, 4)}}
 
 	got := fold([]agent.Session{parent, child})
 	if d := got[0].Turns[0].Delegated[0].Description; d != "" {
@@ -116,10 +140,10 @@ func TestTaskNameIsNotTreatedAsABrief(t *testing.T) {
 // A sub-agent can spawn its own, and the deepest work still has to arrive.
 func TestNestedDelegationIsKept(t *testing.T) {
 	parent := agent.Session{ID: "S", Turns: []agent.Turn{spent(30, "build it", 100, 10)}}
-	parent.Turns[0].Delegated = []agent.Delegation{{Kind: "art"}}
-	mid := agent.Session{ID: "C", ParentID: "S", Turns: []agent.Turn{spent(31, "/root/art", 40, 4)}}
-	mid.Turns[0].Delegated = []agent.Delegation{{Kind: "sprites"}}
-	deep := agent.Session{ID: "D", ParentID: "C", Turns: []agent.Turn{spent(32, "/root/art/sprites", 7, 1)}}
+	parent.Turns[0].Delegated = []agent.Delegation{{Name: "art"}}
+	mid := agent.Session{ID: "C", ParentID: "S", Turns: []agent.Turn{handed(31, "/root/art", 40, 4)}}
+	mid.Turns[0].Delegated = []agent.Delegation{{Name: "sprites"}}
+	deep := agent.Session{ID: "D", ParentID: "C", Turns: []agent.Turn{handed(32, "/root/art/sprites", 7, 1)}}
 
 	got := fold([]agent.Session{parent, mid, deep})
 	if len(got) != 1 {
@@ -133,7 +157,7 @@ func TestNestedDelegationIsKept(t *testing.T) {
 // A session whose parent is not among those read keeps its place. Showing work
 // in the wrong spot is a smaller wrong than losing it.
 func TestOrphanedDelegationIsKept(t *testing.T) {
-	orphan := agent.Session{ID: "C", ParentID: "missing", Turns: []agent.Turn{spent(31, "/root/art", 40, 4)}}
+	orphan := agent.Session{ID: "C", ParentID: "missing", Turns: []agent.Turn{handed(31, "/root/art", 40, 4)}}
 
 	got := fold([]agent.Session{orphan})
 	if len(got) != 1 {
@@ -163,8 +187,8 @@ func TestOrdinarySessionsAreUntouched(t *testing.T) {
 // here would still pass.
 func TestBuildFoldsDelegatedWork(t *testing.T) {
 	parent := agent.Session{ID: "S", Turns: []agent.Turn{spent(30, "make me a site", 100, 10)}}
-	parent.Turns[0].Delegated = []agent.Delegation{{Kind: "pixel_art"}}
-	child := agent.Session{ID: "C", ParentID: "S", Turns: []agent.Turn{spent(31, "/root/pixel_art", 40, 4)}}
+	parent.Turns[0].Delegated = []agent.Delegation{{Name: "pixel_art"}}
+	child := agent.Session{ID: "C", ParentID: "S", Turns: []agent.Turn{handed(31, "/root/pixel_art", 40, 4)}}
 
 	opt := DefaultOptions()
 	opt.SkipRepo = true
