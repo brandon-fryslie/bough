@@ -2,9 +2,11 @@ package graph
 
 import (
 	"fmt"
+	"maps"
 	"math"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -493,20 +495,26 @@ func commitOf(c agent.Commit) Commit {
 // clone copies the sessions deeply enough that nothing below can be seen by
 // the caller.
 //
-// Only as deep as it needs to be. The turns are rewritten, so those are
-// copied, and so is each turn's commit list because commits are dropped from
-// it and their hashes overwritten. The maps counting tools, files and lines
-// are read and never written here, so they are shared rather than duplicated:
-// copying them on every build would be the expensive part and would buy
-// nothing.
+// Every slice and map a turn owns is copied, not only the ones known to be
+// written today. This used to copy just the commit list, on the reasoning that
+// the counting maps were only ever read, and that stopped being true the moment
+// a sub-agent was folded in: its counts were added to the caller's own maps and
+// its task name written into the caller's hand-offs, so a second build counted
+// the sub-agent twice. Deciding what is safe to share means knowing every
+// stage below, which is the knowledge this function exists to make unnecessary.
 func clone(sessions []agent.Session) []agent.Session {
 	out := make([]agent.Session, len(sessions))
 	for i, s := range sessions {
-		s.Turns = append([]agent.Turn(nil), s.Turns...)
+		s.Turns = slices.Clone(s.Turns)
 		for j := range s.Turns {
-			if s.Turns[j].Committed != nil {
-				s.Turns[j].Committed = append([]agent.Commit(nil), s.Turns[j].Committed...)
-			}
+			t := &s.Turns[j]
+			t.Tools = maps.Clone(t.Tools)
+			t.Files = maps.Clone(t.Files)
+			t.Edits = maps.Clone(t.Edits)
+			t.Lines = maps.Clone(t.Lines)
+			t.Models = maps.Clone(t.Models)
+			t.Delegated = slices.Clone(t.Delegated)
+			t.Committed = slices.Clone(t.Committed)
 		}
 		out[i] = s
 	}

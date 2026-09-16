@@ -355,13 +355,24 @@ func TestBuildDoesNotChangeTheSessionsItIsGiven(t *testing.T) {
 			ID: "s1",
 			Turns: []agent.Turn{{
 				At: when, Text: "do it",
-				Tools: map[string]int{}, Files: map[string]int{},
+				Tools: map[string]int{"Bash": 1}, Files: map[string]int{},
 				Edits: map[string]int{}, Lines: map[string]int{}, Models: map[string]int{},
 				Committed: []agent.Commit{
 					// One made somewhere else, which onlyHere drops.
 					{SHA: "aaaa111", At: when, Dir: "/elsewhere"},
 					{SHA: "bbbb222", At: when},
 				},
+				// Unnamed, so folding the sub-agent below writes its name here.
+				Delegated: []agent.Delegation{{Kind: "Explore"}},
+			}},
+		}, {
+			// A sub-agent, which fold adds into the turn above: its counts go
+			// into that turn's maps.
+			ID: "s2", ParentID: "s1",
+			Turns: []agent.Turn{{
+				At: when.Add(time.Second), TaskName: "/root/look",
+				Tools: map[string]int{"Bash": 2}, Files: map[string]int{},
+				Edits: map[string]int{}, Lines: map[string]int{}, Models: map[string]int{},
 			}},
 		}}
 	}
@@ -373,6 +384,12 @@ func TestBuildDoesNotChangeTheSessionsItIsGiven(t *testing.T) {
 
 	if got := len(given[0].Turns[0].Committed); got != 2 {
 		t.Errorf("the caller's commits went from 2 to %d", got)
+	}
+	if got := given[0].Turns[0].Tools["Bash"]; got != 1 {
+		t.Errorf("the caller's tool count went from 1 to %d", got)
+	}
+	if got := given[0].Turns[0].Delegated[0].Name; got != "" {
+		t.Errorf("the caller's hand-off was named %q", got)
 	}
 
 	// And the same input twice gives the same answer, which is only true if
