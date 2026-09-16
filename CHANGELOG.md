@@ -49,8 +49,9 @@ same numbers.
 - **The JSON schema is now 2.** A delegation's task name moved from `kind` to
   `name`. The two were one field holding different things depending on the
   agent: Claude names the sort of sub-agent, Codex names the task. A reader
-  that took `kind` as the task name will find it empty on Codex. Nothing else
-  in the output moved.
+  that took `kind` as the task name will find it empty on Codex. The only
+  other change is a new field, `project.repoRead`, saying whether the
+  repository was read.
 
 - A turn with no prompt says so. A sub-agent's work carried the task name in
   the prompt field, and the words "delegated task" where there was no name.
