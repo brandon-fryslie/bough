@@ -81,6 +81,20 @@ type Project struct {
 	// than their contents. It says which projects are substantial, not how
 	// many prompts they hold.
 	Bytes int64
+
+	// Serves reports whether a path is the project this directory was made to
+	// work on. It is set for a directory the agent created on a project's
+	// behalf, a scratchpad or a worktree, and nil for a project in its own
+	// right, which is the ordinary case.
+	//
+	// It is a question rather than a path because the agent writes the
+	// project's name into such a directory in its own form, and Claude Code's
+	// form cannot be read back (docs/format.md): a dash in the original is
+	// indistinguishable from a separator. So the source, which knows the form,
+	// is asked whether a candidate matches, and the core compares candidates it
+	// already knows about without learning the form itself. More than one
+	// candidate may match, and what that means is the core's decision.
+	Serves func(path string) bool
 }
 
 // Session is one continuous stretch of work as the agent recorded it.

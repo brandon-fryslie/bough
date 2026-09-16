@@ -125,3 +125,53 @@ func TestHistorySaysWhetherItWasRead(t *testing.T) {
 		t.Skip("no git available, so there is nothing to compare against")
 	}
 }
+
+// A subdirectory and a linked worktree both name the checkout they belong to,
+// and a directory outside any repository names nothing.
+func TestDiskNamesTheMainTree(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	base := t.TempDir()
+	main := filepath.Join(base, "main")
+	linked := filepath.Join(base, "linked")
+	if err := os.MkdirAll(filepath.Join(main, "sub", "deep"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	run := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(cmd.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run(main, "init", "-q")
+	run(main, "commit", "-q", "--allow-empty", "-m", "First commit")
+	run(main, "worktree", "add", "-q", linked, "-b", "linked")
+
+	var d Disk
+	// git reports the path it resolved, which on macOS is not the symlinked
+	// spelling the temp directory was handed out under.
+	want := d.MainTree(main)
+	if want == "" {
+		t.Fatal("the checkout itself has no main tree")
+	}
+	for _, dir := range []string{filepath.Join(main, "sub", "deep"), linked} {
+		if got := d.MainTree(dir); got != want {
+			t.Errorf("MainTree(%q) = %q, want %q", dir, got, want)
+		}
+	}
+	if got := d.MainTree(base); got != "" {
+		t.Errorf("MainTree of a directory outside any repository = %q, want none", got)
+	}
+	if d.Exists(filepath.Join(base, "nothing-here")) {
+		t.Error("a missing directory exists")
+	}
+	if !d.Exists(linked) {
+		t.Error("the linked worktree does not exist")
+	}
+}

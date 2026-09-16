@@ -26,6 +26,7 @@ func TestCoreDoesNotDependOnAnyAgent(t *testing.T) {
 		"github.com/nickelsec/bough/internal/rollup",
 		"github.com/nickelsec/bough/internal/metrics",
 		"github.com/nickelsec/bough/internal/graph",
+		"github.com/nickelsec/bough/internal/family",
 	}
 
 	for _, pkg := range independent {

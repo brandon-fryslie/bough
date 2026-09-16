@@ -74,6 +74,7 @@ func (s Source) Detect() ([]agent.Project, error) {
 			Ref:        dir,
 			LastWorked: last,
 			Bytes:      size,
+			Serves:     serves(path),
 		})
 	}
 	sort.Slice(projects, func(i, j int) bool { return projects[i].Name < projects[j].Name })
