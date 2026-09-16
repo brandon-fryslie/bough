@@ -1128,7 +1128,9 @@
     model.days.forEach(function (day) {
       day.tasks.forEach(function (task) {
         task.prompts.forEach(function (p) {
-          p.hay = String((p.turn && p.turn.text) || "").toLowerCase();
+          // The line the prompt is shown by, so whatever the page shows for
+          // a turn is what finds it.
+          p.hay = asked(p.turn).toLowerCase();
         });
       });
     });
