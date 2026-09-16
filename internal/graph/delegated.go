@@ -110,9 +110,9 @@ func delegatingTurn(turns []agent.Turn, at time.Time) int {
 
 // absorb adds one turn's work to another.
 //
-// Prompts are not merged. A sub-agent's opening record is an internal task name
-// rather than anything the reader typed, so it names the hand-off instead of
-// joining the list of things somebody asked for.
+// Prompts are not merged. A sub-agent's turn carries a task name rather than
+// anything the reader typed, so it names the hand-off instead of joining the
+// list of things somebody asked for.
 func absorb(dst *agent.Turn, src agent.Turn) {
 	addCounts(dst.Tools, src.Tools)
 	addCounts(dst.Files, src.Files)
@@ -138,7 +138,7 @@ func addCounts(dst, src map[string]int) {
 	}
 }
 
-// describe records which sub-agent did the delegated work.
+// describe records the name of the task a sub-agent was given.
 //
 // What the sub-agent was asked to do is encrypted, so the only thing to hand is
 // its task name, and a name is not a brief. Goal labels prefer a brief over the
@@ -147,37 +147,37 @@ func addCounts(dst, src map[string]int) {
 // badly for a name like "/root/pixel_art", which named the whole afternoon
 // after an internal path instead of after what was asked for.
 //
-// So the name goes on Kind, which says which agent ran, and Description is left
-// alone. An honest blank beats a label nobody wrote.
+// So the name goes on Name and Description is left alone. An honest blank beats
+// a label nobody wrote.
 func describe(dst *agent.Turn, kid agent.Session) {
-	if len(kid.Turns) == 0 || kid.Turns[0].Text == "" {
+	if len(kid.Turns) == 0 || kid.Turns[0].TaskName == "" {
 		return
 	}
-	name := kid.Turns[0].Text
+	name := kid.Turns[0].TaskName
 
 	// The hand-off is usually already recorded, from the spawn call in the
-	// parent's own transcript. The two name the same agent differently: the
+	// parent's own transcript. The two name the same task differently: the
 	// call says "pixel_art" where the sub-agent's transcript says the full path
 	// "/root/pixel_art". Appending would show one delegation twice, so an
-	// existing entry naming the same agent is left as it is.
+	// existing entry naming the same task is left as it is.
 	for i := range dst.Delegated {
-		if sameAgent(dst.Delegated[i].Kind, name) {
+		if sameTask(dst.Delegated[i].Name, name) {
 			return
 		}
 	}
 	for i := range dst.Delegated {
-		if dst.Delegated[i].Kind == "" {
-			dst.Delegated[i].Kind = name
+		if dst.Delegated[i].Name == "" {
+			dst.Delegated[i].Name = name
 			return
 		}
 	}
-	dst.Delegated = append(dst.Delegated, agent.Delegation{Kind: name})
+	dst.Delegated = append(dst.Delegated, agent.Delegation{Name: name})
 }
 
-// sameAgent reports whether two names refer to one sub-agent. A spawn call
-// names the task, its transcript names the path that task runs at, so the last
-// segment is what the two have in common.
-func sameAgent(a, b string) bool {
+// sameTask reports whether two names refer to one task. A spawn call names the
+// task, its transcript names the path that task runs at, so the last segment is
+// what the two have in common.
+func sameTask(a, b string) bool {
 	if a == "" || b == "" {
 		return false
 	}

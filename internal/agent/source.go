@@ -101,9 +101,20 @@ type Session struct {
 }
 
 // Delegation is a unit of work the agent handed to a sub-agent.
+//
+// Each field holds one fact whichever agent recorded it, and a fact the agent
+// did not record is left empty rather than filled from another field. Claude
+// names the sort of sub-agent and writes a brief but never names the task;
+// Codex names the task, sometimes the sort, and encrypts the brief. When one
+// field used to carry whichever name was to hand, every reader had to know
+// which agent wrote it to know what the word meant.
 type Delegation struct {
 	// Kind is the sort of sub-agent, for example "Explore" or "Plan".
 	Kind string
+
+	// Name is what this particular piece of work was called, for example
+	// "pixel_art".
+	Name string
 
 	// Description is what the sub-agent was asked to do, in the words used at
 	// the time.
@@ -195,8 +206,16 @@ func (t *Tokens) Total() int {
 // This is the unit every later stage works from. Anything agent-specific has
 // already been resolved by the time a Turn exists.
 type Turn struct {
-	At   time.Time
-	Text string // what the human typed
+	At time.Time
+
+	// Text is what the human typed, empty when nobody typed anything.
+	Text string
+
+	// TaskName is what the work was called when another agent handed it over
+	// rather than a person asking for it. A sub-agent's turn has no prompt, and
+	// writing the task's name into Text made a field documented as the
+	// person's own words hold something no person wrote.
+	TaskName string
 
 	// Tools counts calls by tool name.
 	Tools map[string]int

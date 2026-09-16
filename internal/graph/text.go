@@ -107,6 +107,12 @@ func WriteText(w io.Writer, g Graph, verbose bool) error {
 				for _, turn := range task.Turns {
 					fmt.Fprintf(w, "      %s  %s\n",
 						turn.At.Format("02 Jan 15:04"), oneLine(turn.Text, 60))
+					// Only a turn another agent handed over has a task, and it
+					// has no prompt. The name is marked as a task so it does not
+					// read as something the person typed.
+					if turn.Task != "" {
+						fmt.Fprintf(w, "                      task from an agent: %s\n", turn.Task)
+					}
 					for _, d := range turn.Delegated {
 						fmt.Fprintf(w, "                      handed off: %s\n", handoff(d))
 					}
@@ -244,13 +250,16 @@ func models(m map[string]int) string {
 
 // handoff names a piece of delegated work.
 //
-// Agents differ in what they record. Claude writes a brief before handing work
-// over, and that describes it. Codex encrypts the brief and leaves only the
-// name of the sub-agent, so the name is what there is to show. Printing the
-// description alone left a bare "handed off:" with nothing after it.
+// Every fact the agent recorded is shown, in the order a reader wants them:
+// the sort of sub-agent, the task's name, then the brief. Agents record
+// different subsets, Claude a sort and a brief and Codex a name and sometimes a
+// sort, and none of them stands in for a missing other.
 func handoff(d Delegation) string {
-	if d.Description != "" {
-		return d.Description
+	var said []string
+	for _, fact := range []string{d.Kind, d.Name, d.Description} {
+		if fact != "" {
+			said = append(said, fact)
+		}
 	}
-	return d.Kind
+	return strings.Join(said, " · ")
 }

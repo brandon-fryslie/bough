@@ -96,28 +96,26 @@ var commandTagRegex = regexp.MustCompile(`(?s)<command>\s*(.*?)\s*</command>`)
 
 // IsHumanPrompt reports whether this record represents a human request.
 func (r *Record) IsHumanPrompt() bool {
-	if r.Type != "response_item" {
-		return false
-	}
-	var item ResponseItem
-	if err := json.Unmarshal(r.Payload, &item); err != nil {
-		return false
-	}
-	if item.Type != "message" || item.Role != "user" {
-		return false
-	}
-	text := r.extractUserText(&item)
-	return cleanPrompt(text) != ""
+	return r.PromptText() != ""
 }
 
-// PromptText returns the user's prompt text, omitting system injections and context headers.
+// PromptText returns what a person typed, omitting system injections and
+// context headers. Any record that is not a user message has none.
 func (r *Record) PromptText() string {
-	var item ResponseItem
-	if err := json.Unmarshal(r.Payload, &item); err != nil {
+	item, ok := r.item("message")
+	if !ok || item.Role != "user" {
 		return ""
 	}
-	text := r.extractUserText(&item)
-	return cleanPrompt(text)
+	return cleanPrompt(r.extractUserText(&item))
+}
+
+// item reads the record as a response item of one type.
+func (r *Record) item(kind string) (ResponseItem, bool) {
+	var item ResponseItem
+	if r.Type != "response_item" || json.Unmarshal(r.Payload, &item) != nil || item.Type != kind {
+		return ResponseItem{}, false
+	}
+	return item, true
 }
 
 // extractUserText joins the chunks of a user message.
@@ -220,7 +218,9 @@ func cleanPrompt(text string) string {
 }
 
 // taskName picks the task out of the envelope wrapped round a delegated brief.
-var taskName = regexp.MustCompile(`(?m)^Task name:\s*(.+)$`)
+// The gap after the colon stays on its line, so an envelope with the name left
+// blank does not read the next header as the name.
+var taskName = regexp.MustCompile(`(?m)^Task name:[ \t]*(.+)$`)
 
 // IsNewTask reports whether this record is a fresh brief handed to a sub-agent.
 //
@@ -230,49 +230,37 @@ var taskName = regexp.MustCompile(`(?m)^Task name:\s*(.+)$`)
 // session with no turns is dropped. That is how a spawned agent's work went
 // missing rather than merely being mislabelled.
 func (r *Record) IsNewTask() bool {
-	if r.Type != "response_item" {
-		return false
-	}
-	var item ResponseItem
-	if err := json.Unmarshal(r.Payload, &item); err != nil {
-		return false
-	}
-	if item.Type != "agent_message" {
-		return false
-	}
-	// Agents message each other in both directions, and a reply is not new
-	// work. Counting every message opened a turn on the parent each time a
-	// sub-agent reported back, inventing a request nobody made.
-	var sb strings.Builder
-	for _, c := range item.Content {
-		if c.Type == "input_text" || c.Type == "text" {
-			sb.WriteString(c.Text)
-		}
-	}
-	return strings.Contains(sb.String(), "Message Type: NEW_TASK")
+	_, ok := r.newTask()
+	return ok
 }
 
-// AgentTaskText names the task a sub-agent was given.
+// TaskName names the task a sub-agent was given, and is empty for any record
+// that is not a fresh brief or whose envelope names nothing.
 //
 // The brief itself is encrypted, but the envelope round it is not, and it
-// carries the task name. That name is what the sub-agent was asked to do, in
-// the words of the agent that asked, so it stands in for a prompt nobody can
-// read.
-func (r *Record) AgentTaskText() string {
-	var item ResponseItem
-	if err := json.Unmarshal(r.Payload, &item); err != nil {
+// carries the task name: what the work was called by the agent that handed it
+// over. It is not a prompt, since nobody typed it.
+func (r *Record) TaskName() string {
+	envelope, ok := r.newTask()
+	if !ok {
 		return ""
 	}
-	var sb strings.Builder
-	for _, c := range item.Content {
-		if c.Type == "input_text" || c.Type == "text" {
-			sb.WriteString(c.Text)
-		}
+	if m := taskName.FindStringSubmatch(envelope); len(m) > 1 {
+		return strings.TrimSpace(m[1])
 	}
-	if m := taskName.FindStringSubmatch(sb.String()); len(m) > 1 {
-		if name := strings.TrimSpace(m[1]); name != "" {
-			return name
-		}
+	return ""
+}
+
+// newTask returns the envelope of a fresh brief handed to a sub-agent.
+//
+// Agents message each other in both directions, and a reply is not new work.
+// Counting every message opened a turn on the parent each time a sub-agent
+// reported back, inventing a request nobody made.
+func (r *Record) newTask() (string, bool) {
+	item, ok := r.item("agent_message")
+	if !ok {
+		return "", false
 	}
-	return "delegated task"
+	envelope := r.extractUserText(&item)
+	return envelope, strings.Contains(envelope, "Message Type: NEW_TASK")
 }

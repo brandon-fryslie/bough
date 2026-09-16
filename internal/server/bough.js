@@ -937,11 +937,15 @@
       // Prompts are the reader's own words and the reason to look, so they
       // are never trimmed.
       li.appendChild(node("p", "said", turn.text));
-      // Agents differ in what they record about a hand-off. Claude writes a
-      // brief describing the work; Codex encrypts that and leaves only the name
-      // of the sub-agent. Showing the description alone left an empty line.
+      // Only a turn another agent handed over has a task, and it has no prompt.
+      // It is drawn as a hand-off so the name does not read as something the
+      // person typed.
+      if (turn.task) li.appendChild(node("p", "handoff", "task from an agent: " + turn.task));
+      // Agents record different facts about a hand-off: Claude the sort of
+      // sub-agent and a brief, Codex the task's name and sometimes its sort.
+      // Every one recorded is shown, and none stands in for a missing other.
       (turn.delegated || []).forEach(function (job) {
-        var said = job.description || job.kind;
+        var said = [job.kind, job.name, job.description].filter(Boolean).join(" · ");
         if (said) li.appendChild(node("p", "handoff", said));
       });
       // A commit sits under the prompt that produced it, so the record reads
