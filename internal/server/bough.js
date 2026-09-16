@@ -801,7 +801,7 @@
       // more than that and the note grows tall enough to have to be placed
       // somewhere other than beside the node, which defeats the point of it.
       pop.appendChild(node("time", "pop-when", when(item.turn.at)));
-      pop.appendChild(node("p", "pop-text", clip(item.turn.text || "", 220)));
+      pop.appendChild(node("p", "pop-text", clip(asked(item.turn), 220)));
 
       var task = owner(item);
       if (task) {
@@ -824,6 +824,13 @@
 
     pop.hidden = false;
     placePop(item);
+  }
+
+  // asked is the line a turn is shown by. A person's turn shows what they
+  // typed. A turn another agent handed over has no prompt, so it shows the
+  // task's name, marked so it does not read as something the person typed.
+  function asked(turn) {
+    return turn.task ? "task from an agent: " + turn.task : turn.text;
   }
 
   function hide() {
@@ -936,17 +943,15 @@
       li.appendChild(node("time", "when", when(turn.at)));
       // Prompts are the reader's own words and the reason to look, so they
       // are never trimmed.
-      li.appendChild(node("p", "said", turn.text));
-      // Only a turn another agent handed over has a task, and it has no prompt.
-      // It is drawn as a hand-off so the name does not read as something the
-      // person typed.
-      if (turn.task) li.appendChild(node("p", "handoff", "task from an agent: " + turn.task));
+      li.appendChild(node("p", "said", asked(turn)));
       // Agents record different facts about a hand-off: Claude the sort of
       // sub-agent and a brief, Codex the task's name and sometimes its sort.
       // Every one recorded is shown, and none stands in for a missing other.
+      // A hand-off that recorded nothing is still shown: that work was handed
+      // off is worth knowing even when nothing says what it was.
       (turn.delegated || []).forEach(function (job) {
         var said = [job.kind, job.name, job.description].filter(Boolean).join(" · ");
-        if (said) li.appendChild(node("p", "handoff", said));
+        li.appendChild(node("p", "handoff", said || "(unnamed)"));
       });
       // A commit sits under the prompt that produced it, so the record reads
       // as what was asked for and what came of it.

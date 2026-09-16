@@ -16,6 +16,7 @@ func TestTextShowsEachRecordedFactForWhatItIs(t *testing.T) {
 	prompt.Delegated = []agent.Delegation{
 		{Kind: "Explore", Description: "Research the fonts"},
 		{Name: "pixel_art"},
+		{},
 	}
 	orphan := agent.Session{ID: "C", ParentID: "missing", Turns: []agent.Turn{handed(31, "/root/sprites", 40, 4)}}
 
@@ -31,6 +32,7 @@ func TestTextShowsEachRecordedFactForWhatItIs(t *testing.T) {
 	for _, want := range []string{
 		"handed off: Explore · Research the fonts\n",
 		"handed off: pixel_art\n",
+		"handed off: (unnamed)\n",
 		"task from an agent: /root/sprites\n",
 	} {
 		if !strings.Contains(out.String(), want) {
