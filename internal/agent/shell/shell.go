@@ -132,21 +132,6 @@ func CommitDir(cmd string) string {
 	return ""
 }
 
-// PendingCommit is a commit command waiting to hear whether it worked.
-//
-// Both sources hold these while a call is outstanding and settle them when the
-// result arrives, keyed by the id of the call that issued them.
-type PendingCommit struct {
-	// Turn is the index of the turn the commit belongs to.
-	Turn int
-
-	// Amend says the command amended rather than created.
-	Amend bool
-
-	// Dir is where it committed, empty for the session's own directory.
-	Dir string
-}
-
 // Extent reports when a set of files was last written and how much they hold.
 //
 // From the files rather than their contents, so listing projects stays cheap
