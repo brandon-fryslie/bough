@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/nickelsec/bough/internal/agent"
-	"github.com/nickelsec/bough/internal/agent/shell"
 	"github.com/nickelsec/bough/internal/agent/transcript"
 )
 
@@ -181,7 +180,7 @@ func ExtractTurns(recs []*Record) []agent.Turn {
 				// Claude Code's shell tool records no directory, so a commit
 				// is placed only by where its command moved.
 				commits.Call(transcript.Call{Turn: len(turns) - 1, ID: b.ID, Command: in.Command})
-				p := shell.NormalisePath(in.path())
+				p := agent.NormalisePath(in.path())
 				if p == "" {
 					continue
 				}

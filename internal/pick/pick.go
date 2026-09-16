@@ -34,6 +34,16 @@ type Item struct {
 
 // Choose shows the list and returns the index the user picked.
 func Choose(title string, items []Item) (int, error) {
+	return From(os.Stdin, os.Stderr, title, items)
+}
+
+// From is Choose against a given terminal, so a caller that was handed its
+// writers can pass them down rather than reaching for the process's own.
+//
+// The reader has to be the real terminal for the interactive list: raw mode
+// and the arrow keys need a file descriptor. Anything else falls to the
+// numbered list, which only needs a line of text back.
+func From(in io.Reader, out io.Writer, title string, items []Item) (int, error) {
 	if len(items) == 0 {
 		return 0, errors.New("nothing to choose from")
 	}
@@ -46,14 +56,14 @@ func Choose(title string, items []Item) (int, error) {
 	// frame would wrap every row, and a wrapped row breaks the redraw: it
 	// steps back by the rows it thinks it wrote rather than the rows on
 	// screen, so the list overwrites itself and smears.
-	if term.IsTerminal(int(os.Stdin.Fd())) && termWidth() >= minRow {
-		if i, err := interactive(os.Stderr, os.Stdin, title, items); err == nil || errors.Is(err, ErrCancelled) {
+	if f, ok := in.(*os.File); ok && term.IsTerminal(int(f.Fd())) && termWidth() >= minRow {
+		if i, err := interactive(out, f, title, items); err == nil || errors.Is(err, ErrCancelled) {
 			return i, err
 		}
 		// The terminal refused raw mode, so fall through to the plain list
 		// rather than failing outright.
 	}
-	return numbered(os.Stderr, os.Stdin, title, items)
+	return numbered(out, in, title, items)
 }
 
 // interactive draws the list and moves through it with the arrow keys.

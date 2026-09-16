@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/nickelsec/bough/internal/agent"
-	"github.com/nickelsec/bough/internal/agent/shell"
 )
 
 // Ensure Source satisfies agent.Source interface.
@@ -77,7 +76,7 @@ func TestDetectAndSessions(t *testing.T) {
 	if turn.Text != "implement user repository and commit" {
 		t.Errorf("expected turn text 'implement user repository and commit', got %q", turn.Text)
 	}
-	expectedFile := shell.NormalisePath("/Users/alice/work/codex-app/repo.go")
+	expectedFile := agent.NormalisePath("/Users/alice/work/codex-app/repo.go")
 	if turn.Files[expectedFile] != 1 {
 		t.Errorf("expected repo.go touched once, got %d", turn.Files[expectedFile])
 	}

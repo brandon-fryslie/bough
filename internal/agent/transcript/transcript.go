@@ -96,7 +96,7 @@ func (c Commits) Call(call Call) {
 		kind: kind,
 		// Where the command moved first beats where it was started, since the
 		// move is the later of the two.
-		dir: cmp.Or(shell.CommitDir(call.Command), shell.NormalisePath(call.Workdir)),
+		dir: cmp.Or(shell.CommitDir(call.Command), agent.NormalisePath(call.Workdir)),
 	}
 }
 
