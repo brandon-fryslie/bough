@@ -16,6 +16,7 @@
 package repo
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -126,11 +127,31 @@ func run(dir string, args ...string) (string, error) {
 	//#nosec G204 // the arguments are fixed above; only the directory varies,
 	// and it comes from the transcript rather than from anything a caller typed.
 	cmd := exec.Command("git", full...)
+	// A repository named in the environment would answer for every directory
+	// asked about. Git hooks export GIT_DIR, and a bare-dotfiles alias sets
+	// both it and GIT_WORK_TREE, so bough launched from either would read one
+	// repository's history whatever path it was handed.
+	cmd.Env = withoutGitEnv(os.Environ())
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
 	}
 	return string(out), nil
+}
+
+// withoutGitEnv drops the variables that point git at a repository other
+// than the one in the directory it is run in.
+func withoutGitEnv(env []string) []string {
+	kept := env[:0:0]
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		switch name {
+		case "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE":
+			continue
+		}
+		kept = append(kept, kv)
+	}
+	return kept
 }
 
 func atoi(s string) int {

@@ -29,6 +29,7 @@ package family
 import (
 	"iter"
 	"path"
+	"regexp"
 	"strings"
 
 	"github.com/nickelsec/bough/internal/agent"
@@ -135,23 +136,47 @@ func index(projects []agent.Project) map[string]*known {
 	return byKey
 }
 
-// Resolve answers for one path, which may be a file or a directory and need
-// not exist.
+// Resolve answers for one absolute path, which may be a file or a directory
+// and need not exist. A relative path is nowhere in particular, so nothing is
+// known about it: resolving it against the directory a session ran in is the
+// caller's to do, since only the caller knows that directory.
 func (r *Resolver) Resolve(p string) Family {
+	p = slashed(p)
+	if !absolute.MatchString(p) {
+		return Family{Name: p, Evidence: None}
+	}
 	return r.resolve(p, map[string]bool{})
 }
+
+// absolute matches a path that starts at a root, unix or Windows.
+var absolute = regexp.MustCompile(`^(?:/|[A-Za-z]:/)`)
 
 // resolve carries the projects already followed through their records, so a
 // pair of directories each recorded as made for the other cannot chase one
 // another forever.
 func (r *Resolver) resolve(p string, followed map[string]bool) Family {
-	p = slashed(p)
+	// [LAW:dataflow-not-control-flow] Three questions, always in this order,
+	// each answered by the nearest directory that can answer it.
+	//
+	// The agent's record comes first. A scratchpad is where a session
+	// experiments, and nine on the history this was built against had a
+	// throwaway repository inside them; the record says whose work that was,
+	// where the repository would only say it was its own.
+	for dir := range ancestors(p) {
+		k, ok := r.known[agent.NormalisePath(dir)]
+		if !ok {
+			continue
+		}
+		if home, ok := r.recorded(k, followed); ok {
+			return Family{Name: home.Name, Evidence: Recorded}
+		}
+	}
 
-	// [LAW:dataflow-not-control-flow] The repository is asked at the nearest
-	// directory that exists, and only there: the answer for a deleted
-	// directory is its ancestor's, and the answer for an existing one is its
-	// own. An ancestor that exists and is in no repository ends the walk with
-	// nothing, which is how containment alone never joins.
+	// The repository is asked at the nearest directory that exists, and only
+	// there: the answer for a deleted directory is its ancestor's, and the
+	// answer for an existing one is its own. An ancestor that exists and is in
+	// no repository ends the walk with nothing, which is how containment alone
+	// never joins.
 	for dir := range ancestors(p) {
 		if !r.disk.Exists(dir) {
 			continue
@@ -163,14 +188,9 @@ func (r *Resolver) resolve(p string, followed map[string]bool) Family {
 	}
 
 	for dir := range ancestors(p) {
-		k, ok := r.known[agent.NormalisePath(dir)]
-		if !ok {
-			continue
+		if k, ok := r.known[agent.NormalisePath(dir)]; ok {
+			return Family{Name: k.path, Evidence: Project}
 		}
-		if home, ok := r.recorded(k, followed); ok {
-			return Family{Name: home.Name, Evidence: Recorded}
-		}
-		return Family{Name: k.path, Evidence: Project}
 	}
 
 	return Family{Name: p, Evidence: None}
@@ -209,8 +229,17 @@ func (r *Resolver) recorded(k *known, followed map[string]bool) (Family, bool) {
 // case-sensitive filesystem will not find a lower-cased spelling of a
 // directory that exists.
 func slashed(p string) string {
-	return path.Clean(strings.ReplaceAll(p, `\`, "/"))
+	p = path.Clean(strings.ReplaceAll(p, `\`, "/"))
+	// path.Dir takes "C:/x" down to "C:", which on Windows is not the root of
+	// the drive but wherever the process happens to be on it.
+	if drive.MatchString(p) {
+		p += "/"
+	}
+	return p
 }
+
+// drive matches a bare Windows drive designator.
+var drive = regexp.MustCompile(`^[A-Za-z]:$`)
 
 // ancestors yields p and then each directory above it, ending at the root.
 func ancestors(p string) iter.Seq[string] {
@@ -219,7 +248,7 @@ func ancestors(p string) iter.Seq[string] {
 			if !yield(p) {
 				return
 			}
-			parent := path.Dir(p)
+			parent := slashed(path.Dir(p))
 			if parent == p || parent == "." {
 				return
 			}

@@ -91,9 +91,11 @@ var (
 		project("/Users/bmf/wt/low-talker-fix", nil),
 
 		// Scratchpads: one names textual-js, one names the fork ambiguously,
-		// one names the deleted worktree.
+		// one names the deleted worktree. Another agent started inside the
+		// first and recorded nothing about it.
 		project("/private/tmp/claude-501/-Users-bmf-code-textual-js/1d56911b-b2f0-46e1-96a3-e1622bc1875c/scratchpad",
 			scratchpadFor("-Users-bmf-code-textual-js")),
+		project("/private/tmp/claude-501/-Users-bmf-code-textual-js/1d56911b-b2f0-46e1-96a3-e1622bc1875c/scratchpad/probe", nil),
 		project("/private/tmp/claude-501/-Users-bmf-code-brandon-fryslie-happy/8074a0b7-19ec-4b75-bd91-a09e32227e4d/scratchpad",
 			scratchpadFor("-Users-bmf-code-brandon-fryslie-happy")),
 		project("/private/tmp/claude-501/-Users-bmf-code-happy--claude-worktrees-calm-sparking-floyd/859818fc-1f79-47fa-9a8b-12b41eeb2b0e/scratchpad",
@@ -112,6 +114,9 @@ var (
 		// Two unrelated directories called docs.
 		project("/Users/bmf/code/docs", nil),
 		project("/Users/bmf/writing/docs", nil),
+
+		// A deleted directory on a Windows drive.
+		project(`D:\work\site\gone`, nil),
 	}
 
 	exists = []string{
@@ -123,6 +128,11 @@ var (
 		"/Users/bmf/code/low-talker", "/Users/bmf/wt", "/Users/bmf/wt/low-talker-fix",
 		"/Users/bmf/code/deps", "/Users/bmf/code/deps/vendorlib", "/Users/bmf/code/deps/vendorlib/src",
 		"/private", "/private/tmp", "/private/tmp/claude-501",
+		"/private/tmp/claude-501/-Users-bmf-code-textual-js",
+		"/private/tmp/claude-501/-Users-bmf-code-textual-js/1d56911b-b2f0-46e1-96a3-e1622bc1875c",
+		"/private/tmp/claude-501/-Users-bmf-code-textual-js/1d56911b-b2f0-46e1-96a3-e1622bc1875c/scratchpad",
+		"/private/tmp/claude-501/-Users-bmf-code-textual-js/1d56911b-b2f0-46e1-96a3-e1622bc1875c/scratchpad/repro",
+		"D:/", "D:/work", "D:/work/site",
 		"/Users/bmf/.claude", "/Users/bmf/.claude/projects", "/Users/bmf/.claude/projects/-Users-bmf-Desktop-notes",
 		"/Users/bmf/.claude/plugins", "/Users/bmf/.claude/plugins/cache",
 		"/Users/bmf/.claude/plugins/cache/memento", "/Users/bmf/.claude/plugins/cache/memento/memento",
@@ -143,6 +153,10 @@ var (
 		"/Users/bmf/code/low-talker":            "/Users/bmf/code/low-talker",
 		"/Users/bmf/wt/low-talker-fix":          "/Users/bmf/code/low-talker",
 		"/Users/bmf/code/deps/vendorlib":        "/Users/bmf/code/deps/vendorlib",
+		"D:/work/site":                          "D:/work/site",
+
+		// A throwaway repository a session made inside its scratchpad.
+		"/private/tmp/claude-501/-Users-bmf-code-textual-js/1d56911b-b2f0-46e1-96a3-e1622bc1875c/scratchpad/repro": "/private/tmp/claude-501/-Users-bmf-code-textual-js/1d56911b-b2f0-46e1-96a3-e1622bc1875c/scratchpad/repro",
 	}
 )
 
@@ -164,15 +178,21 @@ func TestResolve(t *testing.T) {
 		{"a scratchpad joins the one project its name matches",
 			"/private/tmp/claude-501/-Users-bmf-code-textual-js/1d56911b-b2f0-46e1-96a3-e1622bc1875c/scratchpad",
 			Family{"/Users/bmf/code/textual-js", Recorded}},
-		{"a file inside a scratchpad goes where the scratchpad goes",
+		{"a file inside a scratchpad goes where the scratchpad goes, past a project that recorded nothing",
 			"/private/tmp/claude-501/-Users-bmf-code-textual-js/1d56911b-b2f0-46e1-96a3-e1622bc1875c/scratchpad/probe/x.go",
+			Family{"/Users/bmf/code/textual-js", Recorded}},
+		{"a throwaway repository inside a scratchpad is still the scratchpad's project",
+			"/private/tmp/claude-501/-Users-bmf-code-textual-js/1d56911b-b2f0-46e1-96a3-e1622bc1875c/scratchpad/repro/x.go",
 			Family{"/Users/bmf/code/textual-js", Recorded}},
 		{"a scratchpad whose name matches two projects stays alone",
 			"/private/tmp/claude-501/-Users-bmf-code-brandon-fryslie-happy/8074a0b7-19ec-4b75-bd91-a09e32227e4d/scratchpad",
 			Family{"/private/tmp/claude-501/-Users-bmf-code-brandon-fryslie-happy/8074a0b7-19ec-4b75-bd91-a09e32227e4d/scratchpad", Project}},
 		{"a deleted directory joins the repository above it",
-			"/Users/bmf/code/happy/.claude/worktrees/calm-sparking-floyd",
+			"/Users/bmf/code/happy/environments/data/envs/bold-reef/project",
 			Family{"/Users/bmf/code/happy", Repository}},
+		{"a deleted worktree the agent recorded joins by its record",
+			"/Users/bmf/code/happy/.claude/worktrees/calm-sparking-floyd",
+			Family{"/Users/bmf/code/happy", Recorded}},
 		{"a deleted directory with no repository above it stays alone",
 			"/Users/bmf/code/gone",
 			Family{"/Users/bmf/code/gone", Project}},
@@ -206,6 +226,15 @@ func TestResolve(t *testing.T) {
 		{"a Windows spelling walks the same way",
 			`\Users\bmf\code\textual-js\visual-tests\index.html`,
 			Family{"/Users/bmf/code/textual-js", Repository}},
+		{"a deleted directory on a Windows drive walks to the drive's root",
+			`D:\work\site\gone\index.html`,
+			Family{"D:/work/site", Repository}},
+		{"a relative path is nowhere in particular",
+			"src/main.go",
+			Family{"src/main.go", None}},
+		{"an empty path is nowhere in particular",
+			"",
+			Family{".", None}},
 	}
 
 	r := New(history, disk{t: t, dirs: exists, repos: repos})

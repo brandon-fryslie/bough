@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -152,6 +153,12 @@ func TestDiskNamesTheMainTree(t *testing.T) {
 	run(main, "init", "-q")
 	run(main, "commit", "-q", "--allow-empty", "-m", "First commit")
 	run(main, "worktree", "add", "-q", linked, "-b", "linked")
+	// A submodule keeps its git directory under the superproject's, and git
+	// lists that directory as its main worktree.
+	sub := filepath.Join(base, "sub")
+	run(base, "init", "-q", "sub")
+	run(sub, "commit", "-q", "--allow-empty", "-m", "Submodule")
+	run(main, "-c", "protocol.file.allow=always", "submodule", "add", "-q", "../sub", "vendor/sub")
 
 	var d Disk
 	// git reports the path it resolved, which on macOS is not the symlinked
@@ -164,6 +171,10 @@ func TestDiskNamesTheMainTree(t *testing.T) {
 		if got := d.MainTree(dir); got != want {
 			t.Errorf("MainTree(%q) = %q, want %q", dir, got, want)
 		}
+	}
+	subTree := d.MainTree(filepath.Join(main, "vendor", "sub"))
+	if subTree == "" || strings.Contains(subTree, ".git") || !strings.HasSuffix(subTree, filepath.Join("vendor", "sub")) {
+		t.Errorf("MainTree of a submodule = %q, want its own checkout", subTree)
 	}
 	if got := d.MainTree(base); got != "" {
 		t.Errorf("MainTree of a directory outside any repository = %q, want none", got)

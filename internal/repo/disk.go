@@ -29,9 +29,11 @@ func (d *Disk) Exists(dir string) bool {
 // when it sits in none, git is not installed, or git could not say.
 //
 // The main tree names a family, so a linked worktree and a subdirectory of the
-// checkout both answer with the checkout itself. git lists the main tree first
-// whichever worktree it is asked from, and lists a bare repository's own
-// directory, which is as good a name as that repository has.
+// checkout both answer with the checkout itself. A checkout's own top level is
+// that tree unless the checkout is a linked worktree, which git shows by
+// keeping its git directory apart from the common one; then the tree is the
+// first git lists. Asking the listing alone names a submodule after its git
+// directory under .git/modules, which exists and is nobody's project.
 func (d *Disk) MainTree(dir string) string {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -47,7 +49,20 @@ func (d *Disk) MainTree(dir string) string {
 }
 
 func mainTree(dir string) string {
-	out, err := run(dir, "worktree", "list", "--porcelain")
+	out, err := run(dir, "rev-parse", "--path-format=absolute",
+		"--show-toplevel", "--git-dir", "--git-common-dir")
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 3 {
+		return ""
+	}
+	top, gitDir, common := lines[0], lines[1], lines[2]
+	if gitDir == common {
+		return top
+	}
+	out, err = run(dir, "worktree", "list", "--porcelain")
 	if err != nil {
 		return ""
 	}
