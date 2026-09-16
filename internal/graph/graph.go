@@ -61,6 +61,16 @@ type Project struct {
 	// reported because it is a fact about the record, not because it maps to
 	// anything the user would recognise as a unit of work.
 	Sessions int `json:"sessions"`
+
+	// RepoRead says the project's git history was consulted.
+	//
+	// It decides what a commit hash means. Read, and a hash is one the
+	// repository confirmed: anything it could not find has been cleared. Not
+	// read, and every hash is whatever the transcript claimed, unverified.
+	// Without this the two are indistinguishable in the output, which matters
+	// because "not a git repository", "git is not installed" and "--no-repo"
+	// all arrive here looking the same.
+	RepoRead bool `json:"repoRead"`
 }
 
 // Goal is a stretch of work done in one sitting.

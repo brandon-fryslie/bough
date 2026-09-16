@@ -14,20 +14,20 @@ Notable changes, newest first. Format follows
   ~/.claude/projects", even when Codex had been searched too.
 - A Codex commit whose result arrived after the next prompt was dropped. It
   now counts, on the turn that made it, as Claude Code commits always have.
+- A Codex hand-off never learned its task's name from the sub-agent's own
+  record. 0.4.4 read the name from the prompt field it had just emptied, so a
+  spawn that named only the sort of sub-agent stayed nameless.
 - A changed line whose own text opens with the sign, such as adding `++i;`,
   counts as changed in a Codex patch. It was being skipped as a file header,
   which that format never writes.
 
 ### Changed
 
-- A delegation keeps the sort of sub-agent in `kind`, the task's name in
-  `name` and the brief in `description`, whichever agent recorded it. Codex
-  used to put its task name in `kind`, or the literal "subagent" when it named
-  nothing, so the same field meant different things per agent. A Codex
-  sub-agent's turn has an empty `text` and its task name in `task`, where it
-  used to carry the name, or the literal "delegated task", as though someone
-  had typed it. Schema goes to 2. A hand-off now shows every fact recorded,
-  for example "Explore · Research the fonts".
+- A turn another agent handed over carries its task name in the JSON as
+  `task`, and the page and terminal show it as "task from an agent: …", which
+  search also finds. A hand-off shows every fact recorded, for example
+  "Explore · Research the fonts", and "(unnamed)" when nothing was, rather
+  than the brief alone and otherwise whichever name was there.
 - Each agent's ID, name, `--agent` spelling and history location are defined
   once, in `internal/agent/registry` and that agent's own package. The page
   gets the agent's name from Go and no longer keeps its own table.
@@ -37,6 +37,40 @@ Notable changes, newest first. Format follows
   had a copy, and the copies had drifted. Where the agents really record
   different things, such as the directory a command ran in, each supplies
   that as an input.
+
+## 0.4.4 - 2026-09-15
+
+The rest of [@brandon-fryslie](https://github.com/brandon-fryslie)'s review.
+Mostly structure, and it should draw exactly what 0.4.3 drew: same diagram,
+same numbers.
+
+### Changed
+
+- **The JSON schema is now 2.** A delegation's task name moved from `kind` to
+  `name`. The two were one field holding different things depending on the
+  agent: Claude names the sort of sub-agent, Codex names the task. A reader
+  that took `kind` as the task name will find it empty on Codex. The only
+  other change is a new field, `project.repoRead`, saying whether the
+  repository was read.
+
+- A turn with no prompt says so. A sub-agent's work carried the task name in
+  the prompt field, and the words "delegated task" where there was no name.
+  Nobody typed either. The prompt is empty now and the name has its own field.
+
+- The terminal says when the repository was not read. A commit hash means one
+  thing when git confirmed it and another when nothing checked, and
+  `--no-repo`, a directory that is not a repository, and a machine without git
+  all looked the same as a clean confirmation.
+
+### Fixed
+
+- Commits made in a subdirectory, as `cd internal && git commit`, were kept in
+  0.4.3 but only where the project path was written one particular way. Paths
+  from transcripts are now compared in a single form, so the two spellings of
+  a Windows drive are one place.
+
+- Backing out of the project list no longer skips the tool's own cleanup on
+  the way out.
 
 ## 0.4.3 - 2026-09-15
 

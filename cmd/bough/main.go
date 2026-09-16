@@ -23,6 +23,7 @@ import (
 	"github.com/nickelsec/bough/internal/banner"
 	"github.com/nickelsec/bough/internal/graph"
 	"github.com/nickelsec/bough/internal/pick"
+	"github.com/nickelsec/bough/internal/repo"
 	"github.com/nickelsec/bough/internal/server"
 )
 
@@ -147,7 +148,12 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return writeList(stdout, sources, projects)
 	}
 
-	target, err := choose(projects, name, stderr)
+	target, err := choose(projects, name, os.Stdin, stderr)
+	if errors.Is(err, pick.ErrCancelled) {
+		// Backing out is a decision, not a failure. It reaches main as a value
+		// so everything deferred on the way here still runs.
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -164,7 +170,12 @@ func run(args []string, stdout, stderr io.Writer) error {
 
 	opt := graph.DefaultOptions()
 	opt.Tool = released()
-	opt.SkipRepo = *noRepo
+	// Reading git happens here, at the edge, rather than inside the graph.
+	// Building a graph is arithmetic over sessions; shelling out is not, and a
+	// package that does both cannot be tested without a filesystem.
+	if !*noRepo {
+		opt.Repo = repo.Read(target.Path)
+	}
 	g := graph.Build(target, sessions, opt)
 
 	w := stdout
@@ -262,9 +273,9 @@ var valueFlags = map[string]bool{"root": true, "o": true, "agent": true}
 // always shows what is there rather than jumping straight into one project.
 // The project you are standing in is marked and put first, so the common case
 // is still a single keypress.
-func choose(projects []agent.Project, arg string, _ io.Writer) (agent.Project, error) {
+func choose(projects []agent.Project, arg string, in io.Reader, out io.Writer) (agent.Project, error) {
 	if arg == "" {
-		return offer(projects)
+		return offer(projects, in, out)
 	}
 
 	if p, ok := byPath(projects, arg); ok {
@@ -299,12 +310,12 @@ func choose(projects []agent.Project, arg string, _ io.Writer) (agent.Project, e
 }
 
 // offer asks which project to read, with the one you are standing in first.
-func offer(projects []agent.Project) (agent.Project, error) {
+func offer(projects []agent.Project, in io.Reader, out io.Writer) (agent.Project, error) {
 	// The mark only appears when there is a question to ask. Naming a project
 	// means you know what you want, and a banner would be in the way.
-	banner.Write(os.Stderr, "what did you actually build?")
+	banner.Write(out, "what did you actually build?")
 
-	projects, here := currentFirst(projects)
+	projects, here := currentFirst(projects, workingDir())
 
 	items := make([]pick.Item, len(projects))
 	for i, p := range projects {
@@ -315,12 +326,11 @@ func offer(projects []agent.Project) (agent.Project, error) {
 		items[i] = pick.Item{Label: label, Detail: describe(p)}
 	}
 
-	i, err := pick.Choose("Which project?", items)
-	if errors.Is(err, pick.ErrCancelled) {
-		// Backing out is a decision, not a failure.
-		os.Exit(0)
-	}
+	i, err := pick.From(in, out, "Which project?", items)
 	if err != nil {
+		// Cancelling comes back as a value rather than as an exit. Calling
+		// os.Exit here skipped every deferred close on the way out and made
+		// this path impossible to drive from a test.
 		return agent.Project{}, err
 	}
 	return projects[i], nil
@@ -328,15 +338,18 @@ func offer(projects []agent.Project) (agent.Project, error) {
 
 // currentFirst moves the project matching the working directory to the front,
 // and reports whether one was found. The rest keep their order.
-func currentFirst(projects []agent.Project) ([]agent.Project, bool) {
-	cwd, err := os.Getwd()
-	if err != nil {
+//
+// The directory is passed in rather than read here. It was an ambient fact
+// reached for three levels below run, which is the same reason the writers are
+// passed: a caller cannot ask what this does from anywhere else.
+func currentFirst(projects []agent.Project, cwd string) ([]agent.Project, bool) {
+	if cwd == "" {
 		return projects, false
 	}
-	want := strings.ToLower(filepath.Clean(cwd))
+	want := agent.NormalisePath(cwd)
 
 	for i, p := range projects {
-		if strings.ToLower(filepath.Clean(p.Path)) != want {
+		if agent.NormalisePath(p.Path) != want {
 			continue
 		}
 		ordered := make([]agent.Project, 0, len(projects))
@@ -401,9 +414,13 @@ func ago(t time.Time) string {
 // byPath matches a project by its working directory, allowing for the drive
 // letter case drifting between records on Windows.
 func byPath(projects []agent.Project, path string) (agent.Project, bool) {
-	want := strings.ToLower(filepath.Clean(path))
+	// The same normaliser the rest of the tool compares paths with. This used
+	// filepath.Clean, which only understands the separator the host happens to
+	// use, so a transcript written on Windows and read anywhere else compared
+	// as a different place.
+	want := agent.NormalisePath(path)
 	for _, p := range projects {
-		if strings.ToLower(filepath.Clean(p.Path)) == want {
+		if agent.NormalisePath(p.Path) == want {
 			return p, true
 		}
 	}
@@ -513,4 +530,13 @@ func wider(at int, s string) int {
 		return n
 	}
 	return at
+}
+
+// workingDir is where bough was run, or "" if the question cannot be answered.
+func workingDir() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	return cwd
 }

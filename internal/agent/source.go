@@ -11,7 +11,12 @@
 // never import an agent implementation. They see Turn and nothing else.
 package agent
 
-import "time"
+import (
+	"path"
+	"regexp"
+	"strings"
+	"time"
+)
 
 // Agent is what bough knows about a coding agent before reading any of its
 // history: what it is called, where it keeps that history, and how to read it.
@@ -109,7 +114,8 @@ type Session struct {
 // field used to carry whichever name was to hand, every reader had to know
 // which agent wrote it to know what the word meant.
 type Delegation struct {
-	// Kind is the sort of sub-agent, for example "Explore" or "Plan".
+	// Kind is the sort of sub-agent, for example "Explore" or "Plan". Empty
+	// when the agent does not name a type.
 	Kind string
 
 	// Name is what this particular piece of work was called, for example
@@ -117,7 +123,7 @@ type Delegation struct {
 	Name string
 
 	// Description is what the sub-agent was asked to do, in the words used at
-	// the time.
+	// the time. Empty when the brief is unreadable: Codex encrypts it.
 	Description string
 }
 
@@ -254,3 +260,34 @@ type Turn struct {
 	// compaction. Free evidence, worth more than anything we infer.
 	SegmentHint bool
 }
+
+// NormalisePath puts a file path into a comparable form.
+//
+// The same file turns up written several ways across a session, because the
+// drive letter changes case between records and separators differ by platform.
+// Grouping by path only works once those are settled.
+//
+// This deliberately does not use path/filepath. A transcript written on
+// Windows can be read on any machine, so backslashes have to be understood
+// everywhere rather than only where the host happens to use them.
+//
+// A Windows drive is folded to the "d:/" spelling whether it arrived that way
+// or as the "/d/" a unix style shell writes. One project's commits arrived as
+// both in the same session, and they are one directory: comparing them without
+// this said the work happened somewhere else and threw it away. There were two
+// normalisers here doing this differently, and the one that did not understand
+// "/d/" was the one the agents called.
+func NormalisePath(p string) string {
+	if p == "" {
+		return ""
+	}
+	p = strings.ToLower(strings.ReplaceAll(p, `\`, "/"))
+	if m := shellDrive.FindStringSubmatch(p); m != nil {
+		p = m[1] + ":/" + m[2]
+	}
+	return path.Clean(p)
+}
+
+// shellDrive matches the "/d/some/path" a unix style shell uses for a Windows
+// drive, so it can be written the way the transcript records it.
+var shellDrive = regexp.MustCompile(`^/([a-z])/(.*)$`)

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/nickelsec/bough/internal/agent"
-	"github.com/nickelsec/bough/internal/agent/shell"
 	"github.com/nickelsec/bough/internal/agent/transcript"
 )
 
@@ -224,7 +223,7 @@ func applyPatch(cur *agent.Turn, input string) {
 	}
 
 	for i, m := range at {
-		file := shell.NormalisePath(strings.TrimSpace(input[m[2]:m[3]]))
+		file := agent.NormalisePath(strings.TrimSpace(input[m[2]:m[3]]))
 		if file == "" {
 			continue
 		}
