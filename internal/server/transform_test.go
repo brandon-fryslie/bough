@@ -45,7 +45,7 @@ func TestOneTransformMovesTheDrawing(t *testing.T) {
 
 	// And the coordinate system has to be the window, or one unit in the
 	// transform stops being one pixel on screen.
-	if !strings.Contains(src, "function sizeToStage") {
+	if !strings.Contains(src, "function restage") {
 		t.Error("nothing sizes the svg to the stage, so its units are not CSS pixels")
 	}
 

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -22,6 +23,34 @@ func TestScriptsAreWellFormed(t *testing.T) {
 		}
 		if err := wellFormed(string(b)); err != nil {
 			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+// Both scripts are one function scope each, and a function declared twice in
+// one scope is not an error in JavaScript: the later declaration silently
+// replaces the earlier everywhere, including in code above both. That happened
+// once, a show for the view shadowed by the show for the note, and the page
+// loaded with its diagram never placed.
+//
+// Declarations at the top of each script's scope are indented two spaces, so
+// that is what this reads. A function nested inside another is its own scope.
+func TestScriptsDeclareEachFunctionOnce(t *testing.T) {
+	declared := regexp.MustCompile(`(?m)^  function ([A-Za-z_$][\w$]*)\(`)
+	for _, name := range []string{"bough.js", "layout.js"} {
+		b, err := assets.ReadFile(name)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		seen := map[string]bool{}
+		for _, m := range declared.FindAllStringSubmatch(string(b), -1) {
+			if seen[m[1]] {
+				t.Errorf("%s declares function %s twice, so one replaces the other", name, m[1])
+			}
+			seen[m[1]] = true
+		}
+		if len(seen) == 0 {
+			t.Errorf("%s declares no function at the top of its scope, so this reads nothing", name)
 		}
 	}
 }

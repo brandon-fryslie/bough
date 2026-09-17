@@ -182,7 +182,6 @@
     // not the drawing: the layout leaves a wide margin to pan into, and it is
     // not symmetrical. content() already measures what was actually drawn.
     var svg = el("svg", { preserveAspectRatio: "none" });
-    sizeToStage(svg);
 
     var root = el("g", { id: "canvas" });
     svg.appendChild(root);
@@ -239,7 +238,8 @@
     });
 
     host.appendChild(svg);
-    apply();
+    restage();
+    showView();
     reset();
     grow(svg);
   }
@@ -470,6 +470,26 @@
 
   // ---- moving around ------------------------------------------------------
 
+  // viewFrame is the frame the view is next applied in, or 0 when none is
+  // asked for.
+  var viewFrame = 0;
+
+  // showView applies the view at the start of the next frame, once however many
+  // times it is asked before then. A trackpad reports several moves and wheel
+  // turns a frame, and applying each one redrew the whole view that often for
+  // one frame's worth of pixels.
+  //
+  // [LAW:one-source-of-truth] view is what is meant to be shown, changed by
+  // input as it arrives; the transform and every size drawn are derived from
+  // it once a frame, just before that frame is painted.
+  function showView() {
+    if (viewFrame) return;
+    viewFrame = requestAnimationFrame(function () {
+      viewFrame = 0;
+      apply();
+    });
+  }
+
   function apply() {
     var canvas = host.querySelector("#canvas");
     if (!canvas) return;
@@ -535,21 +555,27 @@
     return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 + labels };
   }
 
-  // restage puts the svg back in step with the stage after the stage changes
-  // width, which happens when the record drawer opens or closes. The drawer
-  // takes 320ms to slide, and the size that matters is the one it settles at,
-  // so this listens for the transition rather than guessing at a delay.
-  function restage() {
-    var svg = host.querySelector("svg");
-    if (svg) sizeToStage(svg);
-  }
+  // stageBox is where the stage sits in the window, as restage last measured
+  // it.
+  var stageBox = stage.getBoundingClientRect();
 
-  // sizeToStage gives the svg a coordinate system of CSS pixels the size of
-  // the window, so one unit in the transform is one pixel on screen.
-  function sizeToStage(svg) {
-    var box = stage.getBoundingClientRect();
-    var w = Math.max(box.width, 1);
-    var h = Math.max(box.height, 1);
+  // restage measures the stage and gives the svg a coordinate system of CSS
+  // pixels its size, so one unit in the transform is one pixel on screen. The
+  // stage only moves or changes size when the drawing is built, the window is
+  // resized, or the record drawer finishes opening or closing, and those are
+  // the only times this runs. The drawer takes 320ms to slide, and the size
+  // that matters is the one it settles at, so it waits for the transition
+  // rather than guessing at a delay.
+  //
+  // Measuring on every input event instead read layout the previous event's
+  // redraw had just invalidated, which forced the browser to lay the page out
+  // again then and there: a third of a zoom's time in a Chrome trace.
+  function restage() {
+    stageBox = stage.getBoundingClientRect();
+    var svg = host.querySelector("svg");
+    if (!svg) return;
+    var w = Math.max(stageBox.width, 1);
+    var h = Math.max(stageBox.height, 1);
     svg.setAttribute("viewBox", "0 0 " + w + " " + h);
   }
 
@@ -557,7 +583,7 @@
   // A window narrower than its own margins would otherwise give a scale of
   // zero or less, and an empty stage no amount of panning recovers.
   function room() {
-    var box = stage.getBoundingClientRect();
+    var box = stageBox;
     var margin = box.width < 560 ? 16 : 40;
     return {
       w: Math.max(box.width - margin * 2, 1),
@@ -597,7 +623,7 @@
       view.x = (r.box.width - seen.width * scale) / 2 - seen.x * scale;
     }
     view.y = (r.box.height - seen.height * scale) / 2 - seen.y * scale;
-    apply();
+    showView();
   }
 
   // measure works out both anchors for the current window. Called on load and
@@ -637,7 +663,7 @@
     view.x = ax - (ax - view.x) * (next / view.scale);
     view.y = ay - (ay - view.y) * (next / view.scale);
     view.scale = next;
-    apply();
+    showView();
   }
 
   function readout() {
@@ -663,8 +689,7 @@
   function bindZoom() {
     var step = 1.3;
     function middle() {
-      var box = stage.getBoundingClientRect();
-      return [box.width / 2, box.height / 2];
+      return [stageBox.width / 2, stageBox.height / 2];
     }
     document.getElementById("z-in").addEventListener("click", function () {
       var m = middle();
@@ -702,7 +727,7 @@
       moved = true;
       view.x = e.clientX - from.x;
       view.y = e.clientY - from.y;
-      apply();
+      showView();
     });
 
     ["pointerup", "pointercancel"].forEach(function (name) {
@@ -714,9 +739,8 @@
 
     stage.addEventListener("wheel", function (e) {
       e.preventDefault();
-      var box = stage.getBoundingClientRect();
-      var mx = e.clientX - box.left;
-      var my = e.clientY - box.top;
+      var mx = e.clientX - stageBox.left;
+      var my = e.clientY - stageBox.top;
       // Keep whatever is under the pointer under the pointer.
       zoomTo(view.scale * Math.exp(-e.deltaY * 0.0015), mx, my);
     }, { passive: false });
@@ -961,7 +985,6 @@
     // the transform: reconstructing that by hand was right at the fitted view
     // and drifted further off the more you zoomed in. The element knows.
     var r = at.node.getBoundingClientRect();
-    var stageBox = stage.getBoundingClientRect();
     var gap = 10;
 
     var w = pop.offsetWidth;
