@@ -443,9 +443,16 @@
   // bindAway makes the mark for work elsewhere its own thing to hover, whose
   // note says what was done where. Clicking it, or pressing Enter on it, is
   // left to reach the day it sits on, which opens that sitting's record.
+  //
+  // The mark overlaps its day, so the pointer can leave the mark without ever
+  // leaving the day's group, and the day never hears it arrive. Leaving onto
+  // anything in that group hands the hover back to the day.
   function bindAway(node, item) {
     node.addEventListener("pointerenter", function () { enter(item); });
-    node.addEventListener("pointerleave", function () { leave(item); });
+    node.addEventListener("pointerleave", function (e) {
+      leave(item);
+      if (node.parentNode.contains(e.relatedTarget)) enter(item.day);
+    });
     node.addEventListener("focus", function () { enter(item); });
     node.addEventListener("blur", function () { leave(item); });
   }
