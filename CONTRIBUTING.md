@@ -46,7 +46,8 @@ the other, and only when a frame time moved by more than half a frame, since
 frame times jitter by less than that. A comparison judges dozens of metrics,
 so a stray verdict can still turn up: claim a change by the metrics it was
 meant to move. It refuses runs of different graphs, and does not compare a
-scenario whose runs were drawn on displays refreshing at different rates.
+scenario whose runs were drawn on displays refreshing at rates more than 5%
+apart.
 
 Run `make lint test` before opening a pull request. CI runs the same commands
 on Linux, macOS and Windows.

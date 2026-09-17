@@ -189,6 +189,15 @@ func TestRunsOfDifferentGraphsAreRefused(t *testing.T) {
 	}
 }
 
+// Runs that measured no browser at all have nothing to compare, and saying
+// so is not the same as a comparison that found nothing changed.
+func TestRunsThatMeasuredNothingAreRefused(t *testing.T) {
+	nothing := results{Revision: "a", Graph: measuredGraph{Name: "synthetic small", SHA256: "abc"}}
+	if _, err := compare(nothing, nothing); err == nil || !strings.Contains(err.Error(), "nothing to compare") {
+		t.Errorf("compared with %v, want a refusal", err)
+	}
+}
+
 // A graph's fingerprint is the same every time it is built, and different for
 // a different graph, whatever the two are named.
 func TestAGraphsFingerprintIsItsContent(t *testing.T) {
@@ -259,6 +268,8 @@ func TestRunsOnAnotherDisplayAreNotCompared(t *testing.T) {
 	}{
 		{"one display", 8.333, 8.333, true},
 		{"one display, measured a little apart", 8.333, 8.6, true},
+		{"240 Hz, its frame times reported a tenth of a millisecond apart", 4.1, 4.2, true},
+		{"165 Hz, then 180 Hz", 6.061, 5.556, false},
 		{"60 Hz, then 120 Hz", 16.667, 8.333, false},
 		{"144 Hz, then 120 Hz", 6.944, 8.333, false},
 	} {

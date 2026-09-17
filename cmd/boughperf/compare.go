@@ -160,9 +160,11 @@ const (
 const significance = 0.01
 
 // sameDisplay is how far apart two refresh intervals may be and still be one
-// display's. The nearest refresh rates displays run at, 144 Hz and 165 Hz, are
-// 13% apart.
-const sameDisplay = 0.1
+// display's. A refresh is a median of frame times browsers report to a tenth
+// of a millisecond, so one display's can measure 2.4% apart at 240 Hz. Rates
+// closer than this, like 175 Hz and 180 Hz, pass for one display, and only a
+// long stall's frame time moves by more than half a frame between them.
+const sameDisplay = 0.05
 
 // judge calls a change better or worse only when every run after is past
 // every run before, the separation is one noise makes less often than
@@ -221,6 +223,9 @@ func compare(before, after results) ([]line, error) {
 			before.Graph.Name, before.Graph.SHA256, after.Graph.Name, after.Graph.SHA256)
 	}
 	ps := pairs(before, after)
+	if len(ps) == 0 {
+		return nil, errors.New("neither run measured any browser, so there is nothing to compare")
+	}
 	lines := make([]line, len(ps))
 	for i, p := range ps {
 		lines[i] = lineOf(p, before, after)
