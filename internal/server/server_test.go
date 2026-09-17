@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -72,6 +73,29 @@ func TestServesOnLoopbackOnly(t *testing.T) {
 
 	if !strings.HasPrefix(url, "http://127.0.0.1:") {
 		t.Fatalf("listening on %s, which is not loopback", url)
+	}
+}
+
+// Serving is also how tests and measurement runs load the page, and each of
+// those drives its own client. A server that opened the desktop browser put a
+// stray window in front of the person running them, once per server started,
+// so launching anything is left to the command that wants it.
+//
+// Checked on the package's own imports rather than by watching for a window,
+// since proving a window never appeared means waiting for one that might yet.
+func TestServingLaunchesNothing(t *testing.T) {
+	out, err := exec.Command("go", "list", "-f", `{{join .Imports " "}}`, ".").Output()
+	if err != nil {
+		t.Fatalf("go list: %v", err)
+	}
+	imports := strings.Fields(string(out))
+	if len(imports) == 0 {
+		t.Fatal("go list returned no imports, so nothing was checked")
+	}
+	for _, imp := range imports {
+		if imp == "os/exec" {
+			t.Error("the server imports os/exec; opening a browser belongs to the command")
+		}
 	}
 }
 
