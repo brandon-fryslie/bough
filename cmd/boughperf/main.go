@@ -15,7 +15,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -78,8 +77,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return someFailed
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
+	// No interrupt is caught: the terminal interrupts the drivers too, so the
+	// windows could not be closed in order anyway, and a run cut short is not
+	// one to compare against.
+	ctx := context.Background()
 	r := results{Started: started, Revision: revision, Graph: p.graphName, Repeats: p.repeats}
 	err = serve(ctx, p.graph, func(url string) {
 		for _, b := range p.browsers {
@@ -241,14 +242,23 @@ func split(list string) []string {
 	return strings.FieldsFunc(list, func(r rune) bool { return r == ',' || r == ' ' })
 }
 
-// revision is the commit the working tree is at, and dirty when it has
-// changes, which is the code go run built the page from.
+// revision is the commit the working tree is at, and dirty when anything in
+// it differs from that commit, a new untracked file included, since go run
+// builds the page from whatever is there.
 func revision() (string, error) {
-	out, err := exec.Command("git", "describe", "--always", "--dirty", "--abbrev=12").Output()
+	commit, err := exec.Command("git", "describe", "--always", "--abbrev=12").Output()
 	if err != nil {
 		return "", fmt.Errorf("naming the commit being measured with git describe: %w", err)
 	}
-	return strings.TrimSpace(string(out)), nil
+	changes, err := exec.Command("git", "status", "--porcelain").Output()
+	if err != nil {
+		return "", fmt.Errorf("finding what differs from the commit being measured with git status: %w", err)
+	}
+	measured := strings.TrimSpace(string(commit))
+	if len(changes) > 0 {
+		measured += "-dirty"
+	}
+	return measured, nil
 }
 
 // serve puts g's page on a loopback port, hands its address to use, and stops

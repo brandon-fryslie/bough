@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -247,5 +248,35 @@ func TestAnInvocationThatMeasuresNothingFails(t *testing.T) {
 	}
 	if !strings.Contains(string(body), `"skipped"`) || !strings.Contains(stdout.String(), "safari: skipped") {
 		t.Errorf("kept %s and printed %q, want safari skipped in both", body, stdout.String())
+	}
+}
+
+// The revision measured is marked dirty when the working tree differs from its
+// commit in any way go run would build, a file git does not track included.
+func TestTheRevisionSaysWhenTheTreeIsDirty(t *testing.T) {
+	t.Chdir(t.TempDir())
+	git := func(args ...string) {
+		t.Helper()
+		all := append([]string{"-c", "user.name=t", "-c", "user.email=t@example.com"}, args...)
+		if out, err := exec.Command("git", all...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	if err := os.WriteFile("main.go", []byte("package main\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "main.go")
+	git("commit", "-q", "-m", "a commit")
+
+	clean, err := revision()
+	if err != nil || strings.HasSuffix(clean, "-dirty") {
+		t.Errorf("a clean tree is at %q, %v", clean, err)
+	}
+	if err := os.WriteFile("new.go", []byte("package main\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if dirty, err := revision(); err != nil || dirty != clean+"-dirty" {
+		t.Errorf("a tree with an untracked file is at %q, %v; want %q", dirty, err, clean+"-dirty")
 	}
 }

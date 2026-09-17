@@ -25,6 +25,14 @@ type fakeServer struct {
 	sent    map[string]string
 }
 
+// was is whether command was sent at all.
+func (f *fakeServer) was(command string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_, ok := f.sent[command]
+	return ok
+}
+
 // body is what command was last sent.
 func (f *fakeServer) body(command string) string {
 	f.mu.Lock()
@@ -196,13 +204,18 @@ func TestARefusedSessionSaysWhatToSetUp(t *testing.T) {
 }
 
 // A session whose driver will not say which version of the browser it is in
-// is refused, since whatever it measures could not be compared with anything.
+// is refused, since whatever it measures could not be compared with anything,
+// and closed, since its window is open by then.
 func TestASessionWithoutAVersionIsRefused(t *testing.T) {
-	_, e := serve(t, map[string]reply{
-		"POST /session": {200, `{"value":{"sessionId":"s 1","capabilities":{"browserName":"safari"}}}`},
+	f, e := serve(t, map[string]reply{
+		"POST /session":       {200, `{"value":{"sessionId":"s 1","capabilities":{"browserName":"safari"}}}`},
+		"DELETE /session/s 1": {200, `{"value":null}`},
 	})
 	if _, err := newSession(context.Background(), e, "safari"); err == nil || !strings.Contains(err.Error(), "version") {
 		t.Errorf("opened with %v, want a refusal naming the missing version", err)
+	}
+	if !f.was("DELETE /session/s 1") {
+		t.Error("the refused session was left open")
 	}
 }
 

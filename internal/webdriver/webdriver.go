@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -115,13 +116,17 @@ func newSession(ctx context.Context, e endpoint, browserName string) (*Session, 
 	if err := json.Unmarshal(value, &created); err != nil || created.SessionID == "" {
 		return nil, fmt.Errorf("webdriver: the driver made a session without naming it: %s", value)
 	}
-	if created.Capabilities.BrowserVersion == "" {
-		return nil, fmt.Errorf("webdriver: the driver made a session without saying which version of the browser it is: %s", value)
-	}
-	return &Session{
+	s := &Session{
 		endpoint: endpoint{e.base + "/session/" + url.PathEscape(created.SessionID)},
 		version:  created.Capabilities.BrowserVersion,
-	}, nil
+	}
+	if s.version == "" {
+		// The session is open by now, and no driver closes its window when it
+		// is stopped, so refusing it means closing it.
+		refused := fmt.Errorf("webdriver: the driver made a session without saying which version of the browser it is: %s", value)
+		return nil, errors.Join(refused, s.Close(ctx))
+	}
+	return s, nil
 }
 
 // Version is the version of the browser the session is in, as its driver
