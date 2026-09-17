@@ -92,15 +92,15 @@ func projectsOf(fs []fixture) []agent.Project {
 // recordsOf is one agent's reading of the directories it made: the record on
 // whichever fixture the path lies in.
 func recordsOf(fs []fixture) []agent.MadeFor {
-	return []agent.MadeFor{func(p string) func(string) bool {
+	return []agent.MadeFor{func(p string) (agent.Made, bool) {
 		p = agent.NormalisePath(p)
 		for _, f := range fs {
 			dir := agent.NormalisePath(f.path)
 			if f.serves != nil && (p == dir || strings.HasPrefix(p, dir+"/")) {
-				return f.serves
+				return agent.Made{For: f.serves, Within: p[len(dir):]}, true
 			}
 		}
-		return nil
+		return agent.Made{}, false
 	}}
 }
 

@@ -89,8 +89,9 @@ type FileCount struct {
 // Anything longer is a break rather than thinking time.
 const activeGap = 20 * time.Minute
 
-// Summarise reduces a run of turns to the numbers that describe it.
-func Summarise(turns []agent.Turn) Summary {
+// Summarise reduces a run of turns to the numbers that describe it, with the
+// agent's own files told apart by ambience.
+func Summarise(turns []agent.Turn, ambience Ambience) Summary {
 	var s Summary
 	if len(turns) == 0 {
 		return s
@@ -126,14 +127,14 @@ func Summarise(turns []agent.Turn) Summary {
 		}
 		for f, n := range t.Edits {
 			s.Edits += n
-			if Ambient(f) {
+			if ambience.Ambient(f) {
 				s.AmbientEdits += n
 				continue
 			}
 			edits[f] += n
 		}
 		for f, n := range t.Lines {
-			if !Ambient(f) {
+			if !ambience.Ambient(f) {
 				lines[f] += n
 			}
 		}

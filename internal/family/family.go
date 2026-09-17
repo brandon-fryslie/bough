@@ -217,12 +217,12 @@ func (r *Resolver) recorded(p string, followed map[string]bool) (Family, bool) {
 
 	matched := map[string]*known{}
 	for _, madeFor := range r.madeFor {
-		serves := madeFor(p)
-		if serves == nil {
+		made, ok := madeFor(p)
+		if !ok {
 			continue
 		}
 		for candidate, other := range r.known {
-			if slices.ContainsFunc(other.spellings, serves) {
+			if slices.ContainsFunc(other.spellings, made.For) {
 				matched[candidate] = other
 			}
 		}

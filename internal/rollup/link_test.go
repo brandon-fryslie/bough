@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/nickelsec/bough/internal/agent"
+	"github.com/nickelsec/bough/internal/metrics"
 	"github.com/nickelsec/bough/internal/segment"
 )
 
@@ -27,7 +28,7 @@ func TestLinksFindResumedWork(t *testing.T) {
 		goalOn(3, map[string]int{"ui.css": 4}),
 		goalOn(5, map[string]int{"parser.go": 3}),
 	}
-	links := Links(goals, DefaultLinkOptions())
+	links := Links(goals, metrics.Ambience{}, DefaultLinkOptions())
 
 	if len(links) != 1 {
 		t.Fatalf("got %d links, want 1", len(links))
@@ -52,7 +53,7 @@ func TestLinksAreAbsentWhenNothingIsShared(t *testing.T) {
 		goalOn(1, map[string]int{"a.go": 3}),
 		goalOn(3, map[string]int{"b.go": 3}),
 	}
-	if got := Links(goals, DefaultLinkOptions()); len(got) != 0 {
+	if got := Links(goals, metrics.Ambience{}, DefaultLinkOptions()); len(got) != 0 {
 		t.Errorf("got %d links, want none", len(got))
 	}
 }
@@ -66,7 +67,7 @@ func TestLinksIgnoreTheAgentsOwnFiles(t *testing.T) {
 		goalOn(3, map[string]int{plan: 20}),
 		goalOn(5, map[string]int{plan: 20}),
 	}
-	if got := Links(goals, DefaultLinkOptions()); len(got) != 0 {
+	if got := Links(goals, metrics.Ambience{}, DefaultLinkOptions()); len(got) != 0 {
 		t.Errorf("got %d links from plan churn alone, want none", len(got))
 	}
 }
@@ -77,7 +78,7 @@ func TestLinksSkipIncidentalTouches(t *testing.T) {
 		goalOn(1, map[string]int{"shared.go": 1}),
 		goalOn(3, map[string]int{"shared.go": 1}),
 	}
-	if got := Links(goals, DefaultLinkOptions()); len(got) != 0 {
+	if got := Links(goals, metrics.Ambience{}, DefaultLinkOptions()); len(got) != 0 {
 		t.Errorf("got %d links, want none for a single edit each side", len(got))
 	}
 }
@@ -88,7 +89,7 @@ func TestLinksAlwaysPointForwardInTime(t *testing.T) {
 		goalOn(3, map[string]int{"x.go": 4}),
 		goalOn(5, map[string]int{"x.go": 4}),
 	}
-	for _, l := range Links(goals, DefaultLinkOptions()) {
+	for _, l := range Links(goals, metrics.Ambience{}, DefaultLinkOptions()) {
 		if l.From >= l.To {
 			t.Errorf("link runs backwards: %d to %d", l.From, l.To)
 		}
@@ -101,9 +102,9 @@ func TestLinksAreDeterministic(t *testing.T) {
 		goalOn(1, map[string]int{"a.go": 3, "b.go": 3, "c.go": 3}),
 		goalOn(3, map[string]int{"a.go": 3, "b.go": 3, "c.go": 3}),
 	}
-	first := Links(goals, DefaultLinkOptions())
+	first := Links(goals, metrics.Ambience{}, DefaultLinkOptions())
 	for i := 0; i < 20; i++ {
-		got := Links(goals, DefaultLinkOptions())
+		got := Links(goals, metrics.Ambience{}, DefaultLinkOptions())
 		if len(got) != len(first) {
 			t.Fatal("link count changed between runs")
 		}
@@ -118,10 +119,10 @@ func TestLinksAreDeterministic(t *testing.T) {
 }
 
 func TestLinksOnTooFewGoals(t *testing.T) {
-	if Links(nil, DefaultLinkOptions()) != nil {
+	if Links(nil, metrics.Ambience{}, DefaultLinkOptions()) != nil {
 		t.Error("no goals should give no links")
 	}
-	if Links([]Goal{goalOn(1, map[string]int{"a.go": 5})}, DefaultLinkOptions()) != nil {
+	if Links([]Goal{goalOn(1, map[string]int{"a.go": 5})}, metrics.Ambience{}, DefaultLinkOptions()) != nil {
 		t.Error("one goal cannot link to anything")
 	}
 }

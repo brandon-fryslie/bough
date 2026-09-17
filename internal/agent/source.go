@@ -50,18 +50,32 @@ type Agent struct {
 }
 
 // MadeFor is what an agent wrote into the path of a directory it made on a
-// project's behalf, a scratchpad or a worktree, read back as a question about
-// candidate projects. The path may be anywhere inside such a directory. The
-// answer is nil for a path in no such directory, which is the ordinary case.
-//
-// It is a question rather than a path because the agent writes the project's
-// name in its own form, and Claude Code's form cannot be read back
-// (docs/format.md): a dash in the original is indistinguishable from a
-// separator. So the agent, which knows the form, is asked whether a candidate
-// matches, and the core compares candidates it knows about without learning
-// the form itself. More than one may match, and what that means is the core's
-// decision.
-type MadeFor func(path string) (project func(candidate string) bool)
+// project's behalf, a scratchpad or a worktree, read back. The path may be
+// anywhere inside such a directory. The answer is false for a path in no such
+// directory, which is the ordinary case.
+type MadeFor func(path string) (made Made, ok bool)
+
+// Made is one directory an agent made on a project's behalf, as read from a
+// path inside it.
+type Made struct {
+	// For asks whether a candidate is the project the directory was made for.
+	//
+	// It is a question rather than a path because the agent writes the
+	// project's name in its own form, and Claude Code's form cannot be read
+	// back (docs/format.md): a dash in the original is indistinguishable from
+	// a separator. So the agent, which knows the form, is asked whether a
+	// candidate matches, and the core compares candidates it knows about
+	// without learning the form itself. More than one may match, and what
+	// that means is the core's decision.
+	For func(candidate string) bool
+
+	// Within is the rest of the path below that directory, with slashes for
+	// separators: "/src/main.go" for a file in it, empty for the directory
+	// itself. Where the directory sits says whose work it holds; this says
+	// what the work was. A worktree lives under a project's .claude directory,
+	// and a file in it is the project's code however that location reads.
+	Within string
+}
 
 // Source reads one coding agent's history from one place.
 type Source interface {

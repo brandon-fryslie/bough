@@ -7,6 +7,11 @@ Notable changes, newest first. Format follows
 
 ### Fixed
 
+- Edits in a Claude Code worktree count as work. A worktree sits under the
+  project's `.claude` directory, so its files were all taken for the agent's
+  own bookkeeping and left out of top files, churn, struggle and links.
+- A source directory named `memory`, such as a storage package, counts as
+  work. Only the notes in a memory directory are the agent's own.
 - `--root` is read for every agent. Without `--agent` it used to mean Claude
   Code's history only, so a Codex root listed nothing.
 - With no history found, the message names every agent and every place it
