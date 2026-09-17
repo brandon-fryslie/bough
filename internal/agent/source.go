@@ -84,10 +84,13 @@ type Source interface {
 	// A source that is not installed returns no projects and no error.
 	Detect() ([]Project, error)
 
-	// Sessions reads every session belonging to a project. A session that
+	// Sessions reads every session belonging to the projects, each session
+	// once however many of them its records are spread over. One project read
+	// whole is several directories, and an agent that resumes a session from
+	// another directory replays its earlier records there. A session that
 	// cannot be read is reported through the error return without stopping
 	// the ones that can, since partial history is still worth showing.
-	Sessions(Project) ([]Session, error)
+	Sessions(projects ...Project) ([]Session, error)
 }
 
 // Project is a codebase an agent has worked on.
@@ -126,6 +129,11 @@ type Session struct {
 	ID    string
 	Title string // the agent's own label for the session, when it has one
 	Turns []Turn
+
+	// Dir is the directory the session ran in, the project it was read for.
+	// A commit whose command moved somewhere relative moved from here, and a
+	// project read whole from several directories has sessions from each.
+	Dir string
 
 	// ParentID names the session that delegated this work, empty when a person
 	// started it.
@@ -189,7 +197,8 @@ type Commit struct {
 	At time.Time
 
 	// Dir is where the commit was made, when the command moved somewhere first.
-	// Empty means the project's own directory.
+	// Empty means the directory the session ran in, and a relative path is
+	// relative to it.
 	//
 	// A session about one project often commits in another, a tool and its
 	// website being worked on together for instance. Those commits are real but

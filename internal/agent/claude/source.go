@@ -81,11 +81,32 @@ func (s Source) Detect() ([]agent.Project, error) {
 	return projects, nil
 }
 
-// Sessions reads every transcript belonging to a project.
+// Sessions reads every transcript belonging to the projects.
 //
 // A transcript that cannot be read is reported without abandoning the others,
 // since partial history is still worth showing.
-func (s Source) Sessions(p agent.Project) ([]agent.Session, error) {
+//
+// Each transcript is its own session, and the copies a resume or a rewind
+// writes sit inside that one file, so several projects are read one after
+// another.
+func (s Source) Sessions(projects ...agent.Project) ([]agent.Session, error) {
+	sessions := make([]agent.Session, 0, len(projects))
+	var problems []error
+	for _, p := range projects {
+		found, err := s.sessions(p)
+		sessions = append(sessions, found...)
+		if err != nil {
+			problems = append(problems, err)
+		}
+	}
+	sort.Slice(sessions, func(i, j int) bool {
+		return sessions[i].Turns[0].At.Before(sessions[j].Turns[0].At)
+	})
+	return sessions, errors.Join(problems...)
+}
+
+// sessions reads one project's transcripts.
+func (s Source) sessions(p agent.Project) ([]agent.Session, error) {
 	files, err := transcriptFiles(p.Ref)
 	if err != nil {
 		return nil, err
@@ -115,12 +136,9 @@ func (s Source) Sessions(p agent.Project) ([]agent.Session, error) {
 			ID:    sessionID(recs, fp),
 			Title: sessionTitle(recs),
 			Turns: turns,
+			Dir:   p.Path,
 		})
 	}
-
-	sort.Slice(sessions, func(i, j int) bool {
-		return sessions[i].Turns[0].At.Before(sessions[j].Turns[0].At)
-	})
 	return sessions, errors.Join(problems...)
 }
 

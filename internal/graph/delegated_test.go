@@ -190,11 +190,11 @@ func TestBuildFoldsDelegatedWork(t *testing.T) {
 	parent.Turns[0].Delegated = []agent.Delegation{{Name: "pixel_art"}}
 	child := agent.Session{ID: "C", ParentID: "S", Turns: []agent.Turn{handed(31, "/root/pixel_art", 40, 4)}}
 
-	opt := DefaultOptions()
+	opt := DefaultOptions(made)
 
 	opt.Now = func() time.Time { return minute(50) }
 
-	g := Build(agent.Project{Name: "site", Path: "/site"}, []agent.Session{parent, child}, opt)
+	g := Build(alone(agent.Project{Name: "site", Path: "/site"}), []agent.Session{parent, child}, opt)
 
 	if len(g.Goals) != 1 {
 		t.Fatalf("got %d goals, want 1: delegated work became a sitting of its own", len(g.Goals))

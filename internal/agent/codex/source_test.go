@@ -68,6 +68,9 @@ func TestDetectAndSessions(t *testing.T) {
 	if sessions[0].ID != "codex-sess-001" {
 		t.Errorf("expected session ID 'codex-sess-001', got %q", sessions[0].ID)
 	}
+	if sessions[0].Dir != p.Path {
+		t.Errorf("session ran in %q, want the project's %q", sessions[0].Dir, p.Path)
+	}
 	if len(sessions[0].Turns) != 1 {
 		t.Fatalf("expected 1 turn, got %d", len(sessions[0].Turns))
 	}
@@ -150,5 +153,50 @@ func TestResumedSessionIsOneSessionWithoutRepeats(t *testing.T) {
 	}
 	if said[0] != "add the parser" || said[1] != "now the tests" {
 		t.Errorf("prompts = %q, want them in the order they were typed", said)
+	}
+}
+
+// A session resumed from another directory writes its replay under that
+// directory's project. Read together, as one project spread over both, it is
+// still one session without repeats, and it ran where it began.
+func TestSessionResumedElsewhereIsOneSessionAcrossProjects(t *testing.T) {
+	dir := t.TempDir()
+	day := filepath.Join(dir, "sessions", "2026", "09", "08")
+	if err := os.MkdirAll(day, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(day, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("rollout-a.jsonl", `{"timestamp":"2026-09-08T00:00:00Z","type":"session_meta","payload":{"id":"s1","cwd":"/w/app"}}
+{"timestamp":"2026-09-08T00:00:02Z","type":"response_item","payload":{"type":"message","id":"item-1","role":"user","content":[{"type":"input_text","text":"add the parser"}]}}
+`)
+	write("rollout-b.jsonl", `{"timestamp":"2026-09-08T01:00:00Z","type":"session_meta","payload":{"id":"s1","cwd":"/w/app/sub"}}
+{"timestamp":"2026-09-08T00:00:02Z","type":"response_item","payload":{"type":"message","id":"item-1","role":"user","content":[{"type":"input_text","text":"add the parser"}]}}
+{"timestamp":"2026-09-08T01:00:05Z","type":"response_item","payload":{"type":"message","id":"item-2","role":"user","content":[{"type":"input_text","text":"now the tests"}]}}
+`)
+
+	src := Source{Root: dir}
+	projects, err := src.Detect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projects) != 2 {
+		t.Fatalf("got %d projects, want one per directory", len(projects))
+	}
+	// In either order: the session ran where its earliest rollout was written.
+	for _, order := range [][]agent.Project{{projects[0], projects[1]}, {projects[1], projects[0]}} {
+		sessions, err := src.Sessions(order...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(sessions) != 1 || len(sessions[0].Turns) != 2 {
+			t.Fatalf("got %d sessions, want 1 with 2 prompts", len(sessions))
+		}
+		if want := filepath.Clean("/w/app"); sessions[0].Dir != want {
+			t.Errorf("the session ran in %q, want %q where it began", sessions[0].Dir, want)
+		}
 	}
 }

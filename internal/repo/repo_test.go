@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -257,5 +258,71 @@ func TestDiskNamesTheMainTree(t *testing.T) {
 	}
 	if !d.Exists(linked) {
 		t.Error("the linked worktree does not exist")
+	}
+}
+
+// A project read whole spans a checkout and its linked worktrees, each on a
+// branch of its own. Every one's commits are there, each once, and neither a
+// directory that is gone nor a repository of another's adds anything.
+func TestReadAllGathersEveryCheckoutsCommits(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	base := t.TempDir()
+	main := filepath.Join(base, "main")
+	linked := filepath.Join(base, "linked")
+	if err := os.MkdirAll(main, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(withoutGitEnv(cmd.Environ()),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run(main, "init", "-q")
+	run(main, "commit", "-q", "--allow-empty", "-m", "Shared")
+	run(main, "worktree", "add", "-q", linked, "-b", "linked")
+	run(main, "commit", "-q", "--allow-empty", "-m", "On main")
+	run(linked, "commit", "-q", "--allow-empty", "-m", "On the worktree")
+
+	// A throwaway repository a scratchpad made is among the project's
+	// directories, and is not its repository.
+	throwaway := filepath.Join(base, "scratchpad")
+	if err := os.MkdirAll(throwaway, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run(throwaway, "init", "-q")
+	run(throwaway, "commit", "-q", "--allow-empty", "-m", "Throwaway")
+
+	var d Disk
+	tree := d.MainTree(main)
+	sub := filepath.Join(main, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dirs := d.Checkouts(tree, []string{tree, linked, throwaway, filepath.Join(base, "gone"), main, sub})
+	if len(dirs) != 2 {
+		t.Errorf("checkouts = %q, want the main tree and the worktree, once each", dirs)
+	}
+	if got := d.Checkouts("", []string{throwaway}); len(got) != 0 {
+		t.Errorf("a project in no repository has checkouts %q", got)
+	}
+
+	got := ReadAll(dirs)
+	if !got.Read {
+		t.Fatal("the history says it was not read")
+	}
+	var subjects []string
+	for _, c := range got.Commits {
+		subjects = append(subjects, c.Subject)
+	}
+	sort.Strings(subjects)
+	if want := []string{"On main", "On the worktree", "Shared"}; strings.Join(subjects, "|") != strings.Join(want, "|") {
+		t.Errorf("subjects = %q, want %q", subjects, want)
 	}
 }

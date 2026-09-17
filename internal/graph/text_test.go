@@ -21,9 +21,9 @@ func TestTextShowsEachRecordedFactForWhatItIs(t *testing.T) {
 	}
 	orphan := agent.Session{ID: "C", ParentID: "missing", Turns: []agent.Turn{handed(31, "/root/sprites", 40, 4)}}
 
-	opt := DefaultOptions()
+	opt := DefaultOptions(made)
 	opt.Now = func() time.Time { return minute(50) }
-	g := Build(agent.Project{Name: "site"}, []agent.Session{{ID: "S", Turns: []agent.Turn{prompt}}, orphan}, opt)
+	g := Build(alone(agent.Project{Name: "site", Path: "/work/site"}), []agent.Session{{ID: "S", Turns: []agent.Turn{prompt}}, orphan}, opt)
 
 	var out strings.Builder
 	if err := WriteText(&out, g, true); err != nil {
@@ -68,5 +68,36 @@ func TestTextSaysWhenTheRepositoryWasNotRead(t *testing.T) {
 	}
 	if strings.Contains(b.String(), "the repository was not read") {
 		t.Errorf("a confirmed reading claimed it was not read:\n%s", b.String())
+	}
+}
+
+// A project read from several directories says so, and names them when every
+// prompt is asked for too. One read from a single directory says nothing more.
+func TestTextSaysWhenAProjectSpansDirectories(t *testing.T) {
+	for _, c := range []struct {
+		dirs    []string
+		verbose bool
+		want    []string
+		not     []string
+	}{
+		{[]string{"/work/app"}, true, nil, []string{"directories"}},
+		{[]string{"/work/app", "/work/app/.claude/worktrees/w"}, false, []string{"across 2 directories"}, []string{"  /work/app/.claude/worktrees/w"}},
+		{[]string{"/work/app", "/work/app/.claude/worktrees/w"}, true, []string{"across 2 directories", "  /work/app/.claude/worktrees/w"}, nil},
+	} {
+		var out strings.Builder
+		g := Graph{Project: Project{Name: "app", Path: "/work/app", Directories: c.dirs}}
+		if err := WriteText(&out, g, c.verbose); err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range c.want {
+			if !strings.Contains(out.String(), want) {
+				t.Errorf("%d directories, verbose %v: missing %q in\n%s", len(c.dirs), c.verbose, want, out.String())
+			}
+		}
+		for _, not := range c.not {
+			if strings.Contains(out.String(), not) {
+				t.Errorf("%d directories, verbose %v: unexpected %q in\n%s", len(c.dirs), c.verbose, not, out.String())
+			}
+		}
 	}
 }

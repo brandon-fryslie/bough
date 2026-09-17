@@ -2,6 +2,7 @@ package family
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -238,7 +239,7 @@ func TestResolve(t *testing.T) {
 			Family{"/Users/bmf/code/textual-js", Recorded}},
 		{"a scratchpad whose name matches two projects stays alone",
 			"/private/tmp/claude-501/-Users-bmf-code-brandon-fryslie-happy/8074a0b7-19ec-4b75-bd91-a09e32227e4d/scratchpad",
-			Family{"/private/tmp/claude-501/-Users-bmf-code-brandon-fryslie-happy/8074a0b7-19ec-4b75-bd91-a09e32227e4d/scratchpad", Project}},
+			Family{"/private/tmp/claude-501/-Users-bmf-code-brandon-fryslie-happy/8074a0b7-19ec-4b75-bd91-a09e32227e4d/scratchpad", Itself}},
 		{"a deleted directory joins the repository above it",
 			"/Users/bmf/code/happy/environments/data/envs/bold-reef/project",
 			Family{"/Users/bmf/code/happy", Repository}},
@@ -247,13 +248,13 @@ func TestResolve(t *testing.T) {
 			Family{"/Users/bmf/code/happy", Recorded}},
 		{"a deleted directory with no repository above it stays alone",
 			"/Users/bmf/code/gone",
-			Family{"/Users/bmf/code/gone", Project}},
+			Family{"/Users/bmf/code/gone", Itself}},
 		{"a scratchpad naming a deleted worktree joins that repository",
 			"/private/tmp/claude-501/-Users-bmf-code-happy--claude-worktrees-calm-sparking-floyd/859818fc-1f79-47fa-9a8b-12b41eeb2b0e/scratchpad",
 			Family{"/Users/bmf/code/happy", Recorded}},
 		{"a project under the agent's own storage stays alone",
 			"/Users/bmf/.claude/projects/-Users-bmf-Desktop-notes",
-			Family{"/Users/bmf/.claude/projects/-Users-bmf-Desktop-notes", Project}},
+			Family{"/Users/bmf/.claude/projects/-Users-bmf-Desktop-notes", Itself}},
 		{"a path inside a repository with no history is that repository",
 			"/Users/bmf/code/deps/vendorlib/src/lib.go",
 			Family{"/Users/bmf/code/deps/vendorlib", Repository}},
@@ -268,19 +269,19 @@ func TestResolve(t *testing.T) {
 			Family{"/Users/bmf/writing/docs/draft.md", None}},
 		{"containment alone does not join: the home directory",
 			"/Users/bmf",
-			Family{"/Users/bmf", Project}},
+			Family{"/Users/bmf", Itself}},
 		{"containment alone does not join: a directory inside it with history",
 			"/Users/bmf/code",
-			Family{"/Users/bmf/code", Project}},
+			Family{"/Users/bmf/code", Itself}},
 		{"a shared name does not join a fork",
 			"/Users/bmf/code/brandon-fryslie_happy",
 			Family{"/Users/bmf/code/brandon-fryslie_happy", Repository}},
 		{"a shared name does not join two directories called docs",
 			"/Users/bmf/writing/docs",
-			Family{"/Users/bmf/writing/docs", Project}},
+			Family{"/Users/bmf/writing/docs", Itself}},
 		{"a plugin cache copy is its own install",
 			"/Users/bmf/.claude/plugins/cache/memento/memento/0.3.0/skills/address-pr-reviews",
-			Family{"/Users/bmf/.claude/plugins/cache/memento/memento/0.3.0/skills/address-pr-reviews", Project}},
+			Family{"/Users/bmf/.claude/plugins/cache/memento/memento/0.3.0/skills/address-pr-reviews", Itself}},
 		{"a path nothing is known about is its own family",
 			"/opt/elsewhere/thing.txt",
 			Family{"/opt/elsewhere/thing.txt", None}},
@@ -342,13 +343,13 @@ func TestResolveWithoutRepository(t *testing.T) {
 			Family{"/Users/bmf/code/textual-js", Recorded}},
 		{"a subdirectory has no repository to share",
 			"/Users/bmf/code/textual-js/visual-tests",
-			Family{"/Users/bmf/code/textual-js/visual-tests", Project}},
+			Family{"/Users/bmf/code/textual-js/visual-tests", Itself}},
 		{"a file in a subdirectory joins nothing by containment",
 			"/Users/bmf/code/textual-js/visual-tests/snap.png",
 			Family{"/Users/bmf/code/textual-js/visual-tests/snap.png", None}},
 		{"a linked worktree has no main tree to join",
 			"/Users/bmf/wt/low-talker-fix",
-			Family{"/Users/bmf/wt/low-talker-fix", Project}},
+			Family{"/Users/bmf/wt/low-talker-fix", Itself}},
 	}
 
 	r := WithoutRepository(projectsOf(history), recordsOf(history))
@@ -403,6 +404,107 @@ func TestKeyIsTheSameAcrossAFamily(t *testing.T) {
 	} {
 		if got := r.Resolve(member).Key(); got != root {
 			t.Errorf("Resolve(%q).Key() = %q, want %q", member, got, root)
+		}
+	}
+}
+
+// Directories with history gather into one project per family and agent, and
+// only the way Resolve joins them: containment and a shared name join nothing.
+func TestProjectsGatherAFamilysDirectories(t *testing.T) {
+	fixtures := append(slices.Clone(history), fixture{path: "/Users/bmf/code/textual-js", history: true})
+	projects := projectsOf(fixtures)
+	// The last one is Codex's history of textual-js, which is a project of its own.
+	projects[len(projects)-1].Source = "codex"
+	for i := range projects[:len(projects)-1] {
+		projects[i].Source = "claude-code"
+	}
+
+	got := map[string][]string{}
+	for _, p := range New(projects, recordsOf(fixtures), disk{t: t, dirs: exists, repos: repos}).Projects() {
+		for _, m := range p.Members {
+			got[p.Key()] = append(got[p.Key()], m.Path)
+		}
+	}
+
+	for key, want := range map[string][]string{
+		"/users/bmf/code/textual-js claude-code": {
+			"/Users/bmf/code/textual-js",
+			"/Users/bmf/code/textual-js/visual-tests",
+			"/private/tmp/claude-501/-Users-bmf-code-textual-js/1d56911b-b2f0-46e1-96a3-e1622bc1875c/scratchpad",
+			"/private/tmp/claude-501/-Users-bmf-code-textual-js/1d56911b-b2f0-46e1-96a3-e1622bc1875c/scratchpad/probe",
+		},
+		// One agent's history is its own project, whatever another agent did in
+		// the same family.
+		"/users/bmf/code/textual-js codex": {"/Users/bmf/code/textual-js"},
+		"/users/bmf/code/happy claude-code": {
+			"/Users/bmf/code/happy",
+			"/Users/bmf/code/happy/.claude/worktrees/calm-sparking-floyd",
+			"/private/tmp/claude-501/-Users-bmf-code-happy--claude-worktrees-calm-sparking-floyd/859818fc-1f79-47fa-9a8b-12b41eeb2b0e/scratchpad",
+		},
+		// A worktree whose main tree has no history is named after the main tree.
+		"/users/bmf/code/low-talker claude-code": {"/Users/bmf/wt/low-talker-fix"},
+		// Containment alone joins nothing.
+		"/users/bmf claude-code":      {"/Users/bmf"},
+		"/users/bmf/code claude-code": {"/Users/bmf/code"},
+		// A shared name joins nothing.
+		"/users/bmf/code/brandon-fryslie_happy claude-code": {"/Users/bmf/code/brandon-fryslie_happy"},
+		"/users/bmf/code/docs claude-code":                  {"/Users/bmf/code/docs"},
+		"/users/bmf/writing/docs claude-code":               {"/Users/bmf/writing/docs"},
+	} {
+		if !slices.Equal(got[key], want) {
+			t.Errorf("project %s has members\n got %q\nwant %q", key, got[key], want)
+		}
+	}
+}
+
+// Under --no-repo only the agent's record joins: its worktrees and scratchpads
+// come home, and a linked worktree it did not make stays a project of its own.
+func TestProjectsWithoutRepositoryGatherOnlyByRecord(t *testing.T) {
+	var members []string
+	var names []string
+	for _, p := range WithoutRepository(projectsOf(history), recordsOf(history)).Projects() {
+		names = append(names, p.Name())
+		if p.Path == "/Users/bmf/code/happy" {
+			for _, m := range p.Members {
+				members = append(members, m.Path)
+			}
+		}
+	}
+	want := []string{
+		"/Users/bmf/code/happy",
+		"/Users/bmf/code/happy/.claude/worktrees/calm-sparking-floyd",
+		"/private/tmp/claude-501/-Users-bmf-code-happy--claude-worktrees-calm-sparking-floyd/859818fc-1f79-47fa-9a8b-12b41eeb2b0e/scratchpad",
+	}
+	if !slices.Equal(members, want) {
+		t.Errorf("happy has members\n got %q\nwant %q", members, want)
+	}
+	for _, alone := range []string{"low-talker-fix", "visual-tests"} {
+		if !slices.Contains(names, alone) {
+			t.Errorf("%s joined a family with no repository to join it by: %q", alone, names)
+		}
+	}
+	if slices.Contains(names, "calm-sparking-floyd") {
+		t.Errorf("a worktree the agent recorded is still a project of its own: %q", names)
+	}
+}
+
+// A project holds the directory it is known by and its members, spelled any
+// way, and nothing else: not a directory inside one of them.
+func TestProjectHoldsItsOwnDirectories(t *testing.T) {
+	p := Project{Path: "/work/app", Members: []agent.Project{
+		{Path: "/work/app/.claude/worktrees/w"}, {Path: `D:\trees\app`},
+	}}
+	for dir, want := range map[string]bool{
+		"/work/app":                     true,
+		"/work/app/":                    true,
+		"/work/app/.claude/worktrees/w": true,
+		"/d/trees/app":                  true,
+		"/work/app/internal":            false,
+		"/work":                         false,
+		"/work/app-site":                false,
+	} {
+		if got := p.Holds(dir); got != want {
+			t.Errorf("Holds(%q) = %v, want %v", dir, got, want)
 		}
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/nickelsec/bough/internal/agent"
+	"github.com/nickelsec/bough/internal/family"
 	"github.com/nickelsec/bough/internal/pick"
 )
 
@@ -221,22 +222,24 @@ func TestWritesToAFile(t *testing.T) {
 
 func TestCurrentProjectComesFirstAndIsMarked(t *testing.T) {
 	const cwd = "/somewhere/here"
-	projects := []agent.Project{
-		{Name: "alpha", Path: "/somewhere/alpha"},
-		{Name: "here", Path: cwd},
-		{Name: "beta", Path: "/somewhere/beta"},
+	projects := []family.Project{
+		alone("alpha", "/somewhere/alpha", "claude-code"),
+		alone("here", cwd, "claude-code"),
+		alone("beta", "/somewhere/beta", "claude-code"),
+		alone("here", cwd, "codex"),
 	}
 
-	ordered, found := currentFirst(projects, cwd)
-	if !found {
-		t.Fatal("the working directory should have matched a project")
+	ordered, here := currentFirst(projects, family.Family{Name: cwd})
+	// One for each agent that worked there.
+	if here != 2 {
+		t.Fatalf("%d projects are here, want 2", here)
 	}
-	if ordered[0].Name != "here" {
-		t.Errorf("first is %q, want the project we are standing in", ordered[0].Name)
+	if ordered[0].Name() != "here" || ordered[1].Name() != "here" {
+		t.Errorf("first are %q and %q, want the project we are standing in", ordered[0].Name(), ordered[1].Name())
 	}
 	// The rest keep their order, so the list does not reshuffle around the move.
-	if ordered[1].Name != "alpha" || ordered[2].Name != "beta" {
-		t.Errorf("the other projects were reordered: %q, %q", ordered[1].Name, ordered[2].Name)
+	if ordered[2].Name() != "alpha" || ordered[3].Name() != "beta" {
+		t.Errorf("the other projects were reordered: %q, %q", ordered[2].Name(), ordered[3].Name())
 	}
 	if len(ordered) != len(projects) {
 		t.Errorf("got %d projects, want %d", len(ordered), len(projects))
@@ -244,18 +247,23 @@ func TestCurrentProjectComesFirstAndIsMarked(t *testing.T) {
 }
 
 func TestNoMarkerWhenNotInsideAProject(t *testing.T) {
-	projects := []agent.Project{
-		{Name: "alpha", Path: "/nowhere/alpha"},
-		{Name: "beta", Path: "/nowhere/beta"},
+	projects := []family.Project{
+		alone("alpha", "/nowhere/alpha", "claude-code"),
+		alone("beta", "/nowhere/beta", "claude-code"),
 	}
-	ordered, found := currentFirst(projects, "/somewhere/else")
+	ordered, here := currentFirst(projects, family.Family{Name: "/somewhere/else"})
 
-	if found {
+	if here != 0 {
 		t.Error("no project should have matched")
 	}
-	if ordered[0].Name != "alpha" {
-		t.Errorf("order changed when it should not have: %q first", ordered[0].Name)
+	if ordered[0].Name() != "alpha" {
+		t.Errorf("order changed when it should not have: %q first", ordered[0].Name())
 	}
+}
+
+// alone is a project worked in only the directory it is known by.
+func alone(name, path, agentID string) family.Project {
+	return family.Project{Path: path, Agent: agentID, Members: []agent.Project{{Name: name, Path: path, Source: agentID}}}
 }
 
 // Naming a project still goes straight there. The list is for when nothing was
@@ -370,15 +378,16 @@ func TestVersionFlagPrints(t *testing.T) {
 // every deferred close on the way out and makes this path impossible to drive
 // from a test at all. That last part is why none of it was covered.
 func TestChoosingWritesToTheGivenStreamsAndCancelsCleanly(t *testing.T) {
-	projects := []agent.Project{
+	members := []agent.Project{
 		{Name: "alpha", Path: "/somewhere/alpha"},
 		{Name: "beta", Path: "/somewhere/beta"},
 	}
+	families := family.WithoutRepository(members, nil)
 
 	// Empty input: the numbered list reads a line, gets nothing, and treats
 	// that as backing out.
 	var out bytes.Buffer
-	_, err := choose(projects, "", strings.NewReader(""), &out)
+	_, err := choose(families.Projects(), families, "", strings.NewReader(""), &out)
 
 	if !errors.Is(err, pick.ErrCancelled) {
 		t.Fatalf("err = %v, want a cancellation", err)

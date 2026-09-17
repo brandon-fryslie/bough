@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"github.com/nickelsec/bough/internal/agent"
 	"github.com/nickelsec/bough/internal/agent/registry"
 	"github.com/nickelsec/bough/internal/banner"
+	"github.com/nickelsec/bough/internal/family"
 	"github.com/nickelsec/bough/internal/graph"
 	"github.com/nickelsec/bough/internal/pick"
 	"github.com/nickelsec/bough/internal/repo"
@@ -88,7 +90,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		asJSON    = fs.Bool("json", false, "write the graph as JSON instead of text")
 		asText    = fs.Bool("text", false, "write to the terminal instead of opening a browser")
 		list      = fs.Bool("list", false, "list the projects with history and stop")
-		verbose   = fs.Bool("v", false, "include every prompt in the text output")
+		verbose   = fs.Bool("v", false, "include every prompt in the text output, and every directory in --list")
 		root      = fs.String("root", "", "read every agent's history from here instead of its usual location")
 		out       = fs.String("o", "", "write to this file instead of standard output")
 		showVer   = fs.Bool("version", false, "print the version and stop")
@@ -144,11 +146,19 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("no history found; looked for %s", strings.Join(searched, " and "))
 	}
 
+	// Directories are gathered into the projects they are part of before
+	// anything is shown, so the listing, the chooser and a name all speak of
+	// the same projects.
+	made := everyAgentsRecord()
+	disk := &repo.Disk{}
+	families := resolver(projects, made, disk, *noRepo)
+	whole := families.Projects()
+
 	if *list {
-		return writeList(stdout, sources, projects)
+		return writeList(stdout, sources, whole, *verbose)
 	}
 
-	target, err := choose(projects, name, os.Stdin, stderr)
+	target, err := choose(whole, families, name, os.Stdin, stderr)
 	if errors.Is(err, pick.ErrCancelled) {
 		// Backing out is a decision, not a failure. It reaches main as a value
 		// so everything deferred on the way here still runs.
@@ -158,30 +168,17 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	sessions, err := sources[target.Source].Sessions(target)
+	sessions, err := sources[target.Agent].Sessions(target.Members...)
 	if err != nil {
 		// Some transcripts may be unreadable while others are fine, so say so
 		// and carry on with what did load.
 		fmt.Fprintf(stderr, "bough: some history could not be read: %v\n", err)
 	}
 	if len(sessions) == 0 {
-		return fmt.Errorf("no readable history for %s", target.Name)
+		return fmt.Errorf("no readable history for %s", target.Name())
 	}
 
-	opt := graph.DefaultOptions()
-	opt.Tool = released()
-	// Every agent, not only the ones asked for: a session of one agent can
-	// work in a directory another made.
-	for _, a := range registry.All() {
-		opt.Ambience.Made = append(opt.Ambience.Made, a.MadeFor)
-	}
-	// Reading git happens here, at the edge, rather than inside the graph.
-	// Building a graph is arithmetic over sessions; shelling out is not, and a
-	// package that does both cannot be tested without a filesystem.
-	if !*noRepo {
-		opt.Repo = repo.Read(target.Path)
-	}
-	g := graph.Build(target, sessions, opt)
+	g := graph.Build(target, sessions, options(made, disk, target, *noRepo))
 
 	w := stdout
 	if *out != "" {
@@ -203,6 +200,52 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return browse(g, stderr)
 	}
 	return graph.WriteText(w, g, *verbose)
+}
+
+// everyAgentsRecord is every agent's reading of the directories it makes.
+// Every agent, not only the ones asked for: a session of one agent can work in
+// a directory another made.
+func everyAgentsRecord() []agent.MadeFor {
+	all := registry.All()
+	made := make([]agent.MadeFor, len(all))
+	for i, a := range all {
+		made[i] = a.MadeFor
+	}
+	return made
+}
+
+// resolver decides which directories are one project. Under --no-repo git is
+// never asked, so only what the agents recorded joins directories.
+func resolver(projects []agent.Project, made []agent.MadeFor, disk *repo.Disk, noRepo bool) *family.Resolver {
+	if noRepo {
+		return family.WithoutRepository(projects, made)
+	}
+	return family.New(projects, made, disk)
+}
+
+// options are what building a project's graph needs from this edge.
+//
+// [LAW:single-enforcer] The one place a graph's options are made, so every
+// build carries every agent's reading of the directories it makes.
+//
+// Reading git happens here, at the edge, rather than inside the graph.
+// Building a graph is arithmetic over sessions; shelling out is not, and a
+// package that does both cannot be tested without a filesystem. Every
+// checkout of the project's repository among its directories is read, since
+// each worktree has a branch of its own. A project in no repository has none,
+// and nothing is read, as before.
+func options(made []agent.MadeFor, disk *repo.Disk, p family.Project, noRepo bool) graph.Options {
+	opt := graph.DefaultOptions(made)
+	opt.Tool = released()
+	if !noRepo {
+		dirs := make([]string, 0, len(p.Members)+1)
+		dirs = append(dirs, p.Path)
+		for _, m := range p.Members {
+			dirs = append(dirs, m.Path)
+		}
+		opt.Repo = repo.ReadAll(disk.Checkouts(p.Path, dirs))
+	}
+	return opt
 }
 
 // historyRoot is where to read an agent's history: the --root given, or the
@@ -278,54 +321,48 @@ var valueFlags = map[string]bool{"root": true, "o": true, "agent": true}
 // always shows what is there rather than jumping straight into one project.
 // The project you are standing in is marked and put first, so the common case
 // is still a single keypress.
-func choose(projects []agent.Project, arg string, in io.Reader, out io.Writer) (agent.Project, error) {
+func choose(projects []family.Project, families *family.Resolver, arg string, in io.Reader, out io.Writer) (family.Project, error) {
 	if arg == "" {
-		return offer(projects, in, out)
+		return offer(projects, families.Resolve(workingDir()), in, out)
 	}
 
-	if p, ok := byPath(projects, arg); ok {
-		return p, nil
-	}
-
-	var matches []agent.Project
-	for _, p := range projects {
-		name := strings.ToLower(p.Name)
-		tagged := fmt.Sprintf("%s [%s]", name, strings.ToLower(p.Source))
-		argLower := strings.ToLower(arg)
-		if strings.Contains(name, argLower) || strings.Contains(tagged, argLower) {
-			matches = append(matches, p)
-		}
+	// A path and a name answer the same way: one project opens, and several
+	// are named so the reader can say which. A place two agents worked in is
+	// two projects, and a path that quietly chose one hid the other.
+	// An argument written as a path is only ever a path: `bough .` somewhere
+	// with no history once opened a project whose name held a dot.
+	matches := byName(projects, arg)
+	if dir, ok := place(arg); ok {
+		matches = byPath(projects, families.Resolve(dir))
 	}
 	switch len(matches) {
 	case 1:
 		return matches[0], nil
 	case 0:
-		return agent.Project{}, fmt.Errorf("no project matching %q; try --list", arg)
+		return family.Project{}, fmt.Errorf("no project matching %q; try --list", arg)
 	default:
-		var names []string
-		for _, m := range matches {
-			if m.Source != "" {
-				names = append(names, fmt.Sprintf("%s [%s]", m.Name, m.Source))
-			} else {
-				names = append(names, m.Name)
-			}
+		// With the path, since two projects can share a name and the path is
+		// then the only way to ask for one of them.
+		names := make([]string, len(matches))
+		for i, m := range matches {
+			names[i] = fmt.Sprintf("%s [%s] in %s", m.Name(), m.Agent, m.Path)
 		}
-		return agent.Project{}, fmt.Errorf("%q matches several projects: %s", arg, strings.Join(names, ", "))
+		return family.Project{}, fmt.Errorf("%q matches several projects: %s", arg, strings.Join(names, ", "))
 	}
 }
 
 // offer asks which project to read, with the one you are standing in first.
-func offer(projects []agent.Project, in io.Reader, out io.Writer) (agent.Project, error) {
+func offer(projects []family.Project, cwd family.Family, in io.Reader, out io.Writer) (family.Project, error) {
 	// The mark only appears when there is a question to ask. Naming a project
 	// means you know what you want, and a banner would be in the way.
 	banner.Write(out, "what did you actually build?")
 
-	projects, here := currentFirst(projects, workingDir())
+	projects, here := currentFirst(projects, cwd)
 
 	items := make([]pick.Item, len(projects))
 	for i, p := range projects {
-		label := p.Name
-		if i == 0 && here {
+		label := p.Name()
+		if i < here {
 			label += "  (here)"
 		}
 		items[i] = pick.Item{Label: label, Detail: describe(p)}
@@ -336,65 +373,60 @@ func offer(projects []agent.Project, in io.Reader, out io.Writer) (agent.Project
 		// Cancelling comes back as a value rather than as an exit. Calling
 		// os.Exit here skipped every deferred close on the way out and made
 		// this path impossible to drive from a test.
-		return agent.Project{}, err
+		return family.Project{}, err
 	}
 	return projects[i], nil
 }
 
-// currentFirst moves the project matching the working directory to the front,
-// and reports whether one was found. The rest keep their order.
+// currentFirst puts first the projects of the family the working directory
+// belongs to, one per agent that worked there, and reports how many there are.
+// The rest keep their order.
 //
-// The directory is passed in rather than read here. It was an ambient fact
-// reached for three levels below run, which is the same reason the writers are
-// passed: a caller cannot ask what this does from anywhere else.
-func currentFirst(projects []agent.Project, cwd string) ([]agent.Project, bool) {
-	if cwd == "" {
-		return projects, false
-	}
-	want := agent.NormalisePath(cwd)
-
-	for i, p := range projects {
-		if agent.NormalisePath(p.Path) != want {
-			continue
+// The family is passed in rather than resolved here. The directory was an
+// ambient fact reached for three levels below run, which is the same reason
+// the writers are passed: a caller cannot ask what this does from anywhere
+// else.
+func currentFirst(projects []family.Project, cwd family.Family) ([]family.Project, int) {
+	var here, rest []family.Project
+	for _, p := range projects {
+		if p.Is(cwd) {
+			here = append(here, p)
+		} else {
+			rest = append(rest, p)
 		}
-		ordered := make([]agent.Project, 0, len(projects))
-		ordered = append(ordered, p)
-		ordered = append(ordered, projects[:i]...)
-		return append(ordered, projects[i+1:]...), true
 	}
-	return projects, false
+	return append(here, rest...), len(here)
 }
 
 // describe is the dimmer text beside a project name, enough to tell which one
 // is wanted without reading any of the history.
-func describe(p agent.Project) string {
-	size := ""
-	switch {
-	case p.Bytes >= 1<<20:
-		size = fmt.Sprintf("%d MB", p.Bytes>>20)
-	case p.Bytes > 0:
-		size = fmt.Sprintf("%d KB", p.Bytes>>10)
-	}
-	detail := size
-	if !p.LastWorked.IsZero() {
-		if detail != "" {
-			detail = fmt.Sprintf("%s, %s", detail, ago(p.LastWorked))
-		} else {
-			detail = ago(p.LastWorked)
+func describe(p family.Project) string {
+	var bytes int64
+	var last time.Time
+	for _, m := range p.Members {
+		bytes += m.Bytes
+		if m.LastWorked.After(last) {
+			last = m.LastWorked
 		}
 	}
+
 	// Named for every agent, and spelled the way the listing and the page spell
 	// it. Naming only the unfamiliar one made the others look like the absence
 	// of an agent rather than a choice of one.
-	if p.Source != "" {
-		badge := "[" + registry.Display(p.Source) + "]"
-		if detail != "" {
-			detail = badge + " " + detail
-		} else {
-			detail = badge
-		}
+	var parts []string
+	switch {
+	case bytes >= 1<<20:
+		parts = append(parts, fmt.Sprintf("%d MB", bytes>>20))
+	case bytes > 0:
+		parts = append(parts, fmt.Sprintf("%d KB", bytes>>10))
 	}
-	return detail
+	if n := len(p.Members); n > 1 {
+		parts = append(parts, fmt.Sprintf("%d directories", n))
+	}
+	if !last.IsZero() {
+		parts = append(parts, ago(last))
+	}
+	return strings.TrimSpace("[" + registry.Display(p.Agent) + "] " + strings.Join(parts, ", "))
 }
 
 // ago says how long ago something happened, the way a person would.
@@ -416,24 +448,64 @@ func ago(t time.Time) string {
 	}
 }
 
-// byPath matches a project by its working directory, allowing for the drive
-// letter case drifting between records on Windows.
-func byPath(projects []agent.Project, path string) (agent.Project, bool) {
-	// The same normaliser the rest of the tool compares paths with. This used
-	// filepath.Clean, which only understands the separator the host happens to
-	// use, so a transcript written on Windows and read anywhere else compared
-	// as a different place.
-	want := agent.NormalisePath(path)
+// byName matches projects whose name, or name and agent, holds the argument.
+func byName(projects []family.Project, arg string) []family.Project {
+	var matches []family.Project
+	argLower := strings.ToLower(arg)
 	for _, p := range projects {
-		if agent.NormalisePath(p.Path) == want {
-			return p, true
+		name := strings.ToLower(p.Name())
+		tagged := fmt.Sprintf("%s [%s]", name, strings.ToLower(p.Agent))
+		if strings.Contains(name, argLower) || strings.Contains(tagged, argLower) {
+			matches = append(matches, p)
 		}
 	}
-	return agent.Project{}, false
+	return matches
 }
 
+// byPath matches the projects of the family a directory resolved to: the
+// directory it is known by, one of its members, or anywhere else it reaches.
+//
+// [LAW:one-source-of-truth] The directory is resolved rather than compared
+// with each member's path, so a path opens the same project the listing put
+// it under, whichever spelling it was written in.
+func byPath(projects []family.Project, f family.Family) []family.Project {
+	var matches []family.Project
+	for _, p := range projects {
+		if p.Is(f) {
+			matches = append(matches, p)
+		}
+	}
+	return matches
+}
+
+// place is the directory an argument names, when it is written as one.
+//
+// [LAW:parse-dont-validate] The shape decides, not the disk. An absolute path,
+// in either platform's spelling since a history written on Windows can be read
+// anywhere, is a place whether or not it still exists: a deleted worktree's
+// path still says whose it was. A relative one is a place when it is written as
+// a path, `.` or with a separator, and is taken from where bough was run. A bare
+// word is a name, even when a directory of that name sits where bough was run:
+// taken as a path, a name resolved to the repository bough was run in and
+// opened that instead of the project named.
+func place(arg string) (string, bool) {
+	slashed := strings.ReplaceAll(arg, `\`, "/")
+	switch {
+	case strings.HasPrefix(slashed, "/") || driveRooted.MatchString(slashed):
+		return arg, true
+	case slashed == "." || slashed == ".." || strings.Contains(slashed, "/"):
+		abs, err := filepath.Abs(arg)
+		return abs, err == nil
+	}
+	return "", false
+}
+
+// driveRooted matches a path that starts at a Windows drive.
+var driveRooted = regexp.MustCompile(`^[A-Za-z]:(/|$)`)
+
 // writeList prints one line per project, in columns wide enough for what is
-// actually in them.
+// actually in them, and under each the directories it was read from when
+// every directory is asked for.
 //
 // The widths used to be fixed at 24 and 40, which held while every project was
 // a short name in a short path. A Codex project is named after a directory that
@@ -445,35 +517,38 @@ func byPath(projects []agent.Project, path string) (agent.Project, bool) {
 // is the same width on every row so the eye can run down it, and it is filled
 // in for every agent: naming only the unfamiliar one implies the others are
 // somehow the default, which stopped being true when the second one arrived.
-func writeList(w io.Writer, sources map[string]agent.Source, projects []agent.Project) error {
+func writeList(w io.Writer, sources map[string]agent.Source, projects []family.Project, everyDir bool) error {
+	type dir struct {
+		path  string
+		count tally
+	}
 	type row struct {
-		name    string
-		agent   string
-		path    string
-		prompts int
-
-		// unread means the history could not be read, which is a different
-		// thing from a project with no prompts in it. Both used to print as
-		// "0 prompts", so a permission problem or a corrupt file read as an
-		// empty project and there was nothing to say otherwise.
-		unread bool
+		name  string
+		agent string
+		path  string
+		count tally
+		dirs  []dir
 	}
 
 	rows := make([]row, 0, len(projects))
 	var nameW, agentW, pathW int
 	for _, p := range projects {
-		sessions, err := sources[p.Source].Sessions(p)
-		turns := 0
-		for _, s := range sessions {
-			turns += len(s.Turns)
+		src := sources[p.Agent]
+		// The project is read whole, so a session whose records are spread
+		// over several of its directories counts once.
+		r := row{name: p.Name(), agent: "[" + registry.Display(p.Agent) + "]", path: p.Path,
+			count: tallied(len(p.Members))(src.Sessions(p.Members...))}
+
+		// Each directory on its own only when they are asked for, since that
+		// reads every one of them a second time.
+		shown := p.Members
+		if !everyDir {
+			shown = nil
 		}
-		r := row{
-			name:    p.Name,
-			agent:   "[" + registry.Display(p.Source) + "]",
-			path:    p.Path,
-			prompts: turns,
-			unread:  err != nil,
+		for _, m := range shown {
+			r.dirs = append(r.dirs, dir{path: m.Path, count: tallied(1)(src.Sessions(m))})
 		}
+
 		rows = append(rows, r)
 		nameW = wider(nameW, r.name)
 		agentW = wider(agentW, r.agent)
@@ -490,29 +565,71 @@ func writeList(w io.Writer, sources map[string]agent.Source, projects []agent.Pr
 	}
 
 	for _, r := range rows {
-		// A history that failed to read says so rather than reporting a
-		// number. The count came from a discarded error, so a project whose
-		// transcripts could not be opened printed "0 prompts" exactly as an
-		// empty one does, and nothing said which of the two it was.
-		count := fmt.Sprintf("%d prompts", r.prompts)
-		switch {
-		case r.unread && r.prompts > 0:
-			count = fmt.Sprintf("%d prompts, some could not be read", r.prompts)
-		case r.unread:
-			count = "could not be read"
-		}
 		fmt.Fprintf(w, "%-*s  %-*s  %-*s  %s\n",
-			nameW, r.name, agentW, r.agent, pathW, r.path, count)
+			nameW, r.name, agentW, r.agent, pathW, r.path, r.count.say())
+
+		// Under the project's own path, so the directories read as parts of it.
+		for _, d := range r.dirs {
+			fmt.Fprintf(w, "%-*s  %-*s  %-*s  %s\n", nameW, "", agentW, "", pathW, d.path, d.count.say())
+		}
 	}
 	return nil
+}
+
+// tally is how much history a directory, or a whole project, holds.
+type tally struct {
+	prompts int
+
+	// dirs is how many directories were read.
+	dirs int
+
+	// unread means some history could not be read, which is a different
+	// thing from having no prompts. Both used to print as "0 prompts", so a
+	// permission problem or a corrupt file read as an empty project and there
+	// was nothing to say otherwise.
+	unread bool
+}
+
+// tallied counts what a read of dirs directories found.
+func tallied(dirs int) func([]agent.Session, error) tally {
+	return func(sessions []agent.Session, err error) tally {
+		t := tally{dirs: dirs, unread: err != nil}
+		for _, s := range sessions {
+			t.prompts += len(s.Turns)
+		}
+		return t
+	}
+}
+
+// say gives the count, across however many directories it was taken from, or
+// says there is none to give.
+//
+// A history that failed to read says so rather than reporting a number. The
+// count came from a discarded error, so a project whose transcripts could not
+// be opened printed "0 prompts" exactly as an empty one does, and nothing said
+// which of the two it was. Only a single directory with nothing read is
+// unreadable outright: across several, one failure says nothing of the rest.
+func (t tally) say() string {
+	where := ""
+	if t.dirs > 1 {
+		where = fmt.Sprintf(" in %d directories", t.dirs)
+	}
+	switch {
+	case !t.unread:
+		return fmt.Sprintf("%d prompts%s", t.prompts, where)
+	case t.dirs == 1 && t.prompts == 0:
+		return "could not be read"
+	}
+	return fmt.Sprintf("%d prompts%s, some could not be read", t.prompts, where)
 }
 
 const usage = `bough shows the shape of the work in a project's AI coding history.
 
   bough              choose a project and open it in a browser
-  bough my-project   open a project by name
+  bough my-project   open a project by name, or by any directory in it
   bough --text       write to the terminal instead
   bough --list       show which projects have history
+  bough --list -v    and every directory each project was read from
   bough --json       write the graph as JSON
   bough --version    print the version
   bough --no-repo    leave the project's git history unread

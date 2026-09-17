@@ -22,6 +22,17 @@ func WriteText(w io.Writer, g Graph, verbose bool) error {
 	if p.Path != "" {
 		fmt.Fprintf(w, "%s\n", p.Path)
 	}
+	// Said when the history came from more than the one directory, since the
+	// sittings below are then not all the path's own. Every prompt is listed
+	// when asked for, and so is every directory.
+	if n := len(p.Directories); n > 1 {
+		fmt.Fprintf(w, "across %d directories\n", n)
+		if verbose {
+			for _, d := range p.Directories {
+				fmt.Fprintf(w, "  %s\n", d)
+			}
+		}
+	}
 
 	t := g.Totals
 	fmt.Fprintf(w, "\n%s across %s\n", plural(t.Turns, "prompt"), plural(len(g.Goals), "sitting"))
