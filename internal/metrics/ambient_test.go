@@ -26,6 +26,10 @@ func TestAmbient(t *testing.T) {
 		// the agent's own plans, and they are still checkouts of it.
 		worktree("/home/x/.claude/worktrees/tidy-otter"),
 		worktree("C:/Users/x/code/app/.claude/worktrees/calm-river"),
+		// A repository cloned into a scratchpad, with a worktree made in it:
+		// the scratchpad answers first, and the worktree is found below.
+		worktree("/tmp/scratchpad"),
+		worktree("/clone/.claude/worktrees/deep-pine"),
 	}}
 
 	for p, want := range map[string]bool{
@@ -57,6 +61,8 @@ func TestAmbient(t *testing.T) {
 		"/home/x/code/app/.claude/worktrees/calm-river/internal/memory/store.go":    false,
 		`C:\Users\x\code\app\.claude\worktrees\calm-river\cmd\main.go`:              false,
 		"/home/x/.claude/worktrees/tidy-otter/src/main.go":                          false,
+		"/tmp/scratchpad/clone/.claude/worktrees/deep-pine/src/main.go":             false,
+		"/tmp/scratchpad/clone/.claude/worktrees/deep-pine/CLAUDE.md":               true,
 	} {
 		if got := ambience.Ambient(p); got != want {
 			t.Errorf("Ambient(%q) = %v, want %v", p, got, want)

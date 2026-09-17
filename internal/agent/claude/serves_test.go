@@ -65,7 +65,8 @@ func TestAgentReadsWhichProjectADirectoryWasMadeFor(t *testing.T) {
 
 // What lies below a directory the agent made is read from the directory down,
 // so where the directory sits says nothing about the files in it. A worktree
-// made inside another is read from the inner one.
+// made inside another is read from the inner one, and one inside a scratchpad
+// is found by asking about what lies below the scratchpad.
 func TestServesSaysWhatLiesBelowTheDirectory(t *testing.T) {
 	for p, want := range map[string]string{
 		"/Users/bmf/code/happy/.claude/worktrees/calm-sparking-floyd":                                 "",
@@ -86,5 +87,16 @@ func TestServesSaysWhatLiesBelowTheDirectory(t *testing.T) {
 		if made.Within != want {
 			t.Errorf("below %q: got %q, want %q", p, made.Within, want)
 		}
+	}
+}
+
+func TestServesFindsAWorktreeBelowAScratchpad(t *testing.T) {
+	pad, ok := serves("/private/tmp/claude-501/-Users-bmf-code-happy/1d56911b-b2f0-46e1-96a3-e1622bc1875c/scratchpad/clone/.claude/worktrees/deep-pine/main.go")
+	if !ok {
+		t.Fatal("the scratchpad was not recognised")
+	}
+	tree, ok := serves(pad.Within)
+	if !ok || tree.Within != "/main.go" {
+		t.Errorf("below the scratchpad: got %q, %v, want the worktree with /main.go below it", tree.Within, ok)
 	}
 }

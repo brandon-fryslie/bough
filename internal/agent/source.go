@@ -71,7 +71,8 @@ type Made struct {
 
 	// Within is the rest of the path below that directory, with slashes for
 	// separators: "/src/main.go" for a file in it, empty for the directory
-	// itself. Where the directory sits says whose work it holds; this says
+	// itself. It is a path like any other, so a directory made inside this
+	// one is found by asking about it in turn. Where the directory sits says whose work it holds; this says
 	// what the work was. A worktree lives under a project's .claude directory,
 	// and a file in it is the project's code however that location reads.
 	Within string

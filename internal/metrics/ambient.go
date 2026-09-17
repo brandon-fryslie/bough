@@ -55,11 +55,14 @@ func (a Ambience) Ambient(p string) bool {
 }
 
 // within is the part of a path that says what kind of file it is: below the
-// directory an agent made it in, or the whole path when it is in none.
+// innermost directory an agent made it in, or the whole path when it is in
+// none. What lies below one directory is asked about again, so a worktree
+// inside a scratchpad is read from the worktree whichever the agent reads
+// first.
 func (a Ambience) within(p string) string {
 	for _, madeFor := range a.Made {
 		if made, ok := madeFor(p); ok {
-			return made.Within
+			return a.within(made.Within)
 		}
 	}
 	return p
