@@ -322,6 +322,7 @@ func TestKeptResultsReadBack(t *testing.T) {
 		"no graph fingerprint":              `{"graph":{"name":"g"},"browsers":[]}`,
 		"a browser kept twice":              `{"graph":{"name":"g","sha256":"abc"},"browsers":[{"browser":"x","skipped":"y"},{"browser":"x","failed":"z"}]}`,
 		"a scenario kept twice":             `{"graph":{"name":"g","sha256":"abc"},"browsers":[{"browser":"x","version":"1","scenarios":[{"scenario":"s","runs":[]},{"scenario":"s","runs":[]}]}]}`,
+		"a browser that played nothing":     `{"graph":{"name":"g","sha256":"abc"},"browsers":[{"browser":"x","version":"1","scenarios":[]}]}`,
 	} {
 		if err := json.Unmarshal([]byte(raw), &results{}); err == nil {
 			t.Errorf("%s: read", name)

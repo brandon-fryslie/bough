@@ -97,7 +97,7 @@ func readBrowser(raw json.RawMessage) (browser, error) {
 	for key, as := range map[string]func(json.RawMessage) (browser, error){
 		"skipped":   readAs[skipped],
 		"failed":    readAs[unopened],
-		"scenarios": readAs[played],
+		"scenarios": readPlayed,
 	} {
 		if _, ok := keys[key]; ok {
 			read = append(read, as)
@@ -114,6 +114,19 @@ func readAs[B browser](raw json.RawMessage) (browser, error) {
 	var b B
 	if err := json.Unmarshal(raw, &b); err != nil {
 		return nil, err
+	}
+	return b, nil
+}
+
+// readPlayed reads raw as a browser that played, which is at least one
+// scenario: a run is always asked to play one.
+func readPlayed(raw json.RawMessage) (browser, error) {
+	b, err := readAs[played](raw)
+	if err != nil {
+		return nil, err
+	}
+	if len(b.scenarios()) == 0 {
+		return nil, fmt.Errorf("played no scenario: %s", raw)
 	}
 	return b, nil
 }

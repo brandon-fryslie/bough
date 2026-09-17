@@ -295,9 +295,13 @@ func pickScenarios(names string) ([]scenario.Scenario, error) {
 	return out, nil
 }
 
-// split is the names in a comma separated list, each named once.
+// split is the names in a comma separated list, each named once. A list that
+// names nothing is refused rather than read as asking for nothing.
 func split(list string) ([]string, error) {
 	names := strings.FieldsFunc(list, func(r rune) bool { return r == ',' || r == ' ' })
+	if len(names) == 0 {
+		return nil, fmt.Errorf("%q names nothing", list)
+	}
 	return names, once(names)
 }
 
