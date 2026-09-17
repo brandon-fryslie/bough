@@ -40,6 +40,11 @@
   // open, so a name links exactly where the link has a page to land on.
   var away = window.BOUGH_ELSEWHERE;
 
+  // The projects a name can link to. The server's answer holds only while it
+  // is serving the page: a copy saved from the browser has no server behind
+  // it, so there every project is named without a link.
+  var openable = /^https?:$/.test(location.protocol) ? away.served : {};
+
   // The agents whose history this is, in the order the graph lists them, and
   // each one's name as Go spelled it into the key at the top of the page.
   var agents = graph.project.agents || [];
@@ -1123,7 +1128,7 @@
       var one = node("div", "visit");
       var name = baseName(v.path);
       var head = node("h4", "visit-name");
-      if (away.served[v.family]) {
+      if (openable[v.family]) {
         var link = node("a", "visit-link", name);
         link.href = "/family?key=" + encodeURIComponent(v.family) +
           "&from=" + dayOf(goal.stats.start) + "&to=" + dayOf(goal.stats.end);
