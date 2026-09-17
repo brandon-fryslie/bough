@@ -73,8 +73,8 @@ func TestRealInputReachesTheBrowser(t *testing.T) {
 			defer cancel()
 			// One session a browser, because Safari allows only one at a time.
 			s := open(ctx, t, b)
-			t.Run("input", func(t *testing.T) { inputReachesThePage(ctx, t, s, site.URL) })
-			t.Run("probe", func(t *testing.T) { probeRecordsIt(ctx, t, s, site.URL) })
+			t.Run("input", inputReachesThePage(ctx, s, site.URL))
+			t.Run("probe", probeRecordsIt(ctx, s, site.URL))
 		})
 	}
 }
@@ -92,91 +92,99 @@ func open(ctx context.Context, t *testing.T, b Browser) *Session {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		if err := s.Close(context.Background()); err != nil {
+		// The test's own deadline may have passed by now; closing still has to
+		// happen.
+		if err := s.Close(context.WithoutCancel(ctx)); err != nil {
 			t.Error(err)
 		}
 	})
 	return s
 }
 
-func inputReachesThePage(ctx context.Context, t *testing.T, s *Session, url string) {
-	if err := s.Navigate(ctx, url); err != nil {
-		t.Fatal(err)
-	}
-	drag := Actions{Mouse: []MouseStep{Move{X: 100, Y: 100}, Press{}, Move{X: 200, Y: 150, Over: 200 * time.Millisecond}, Release{}}}
-	if err := s.Perform(ctx, drag); err != nil {
-		t.Fatal(err)
-	}
-	zoom := Actions{Wheel: []WheelStep{Scroll{X: 200, Y: 150, DeltaY: 120}}}
-	if err := s.Perform(ctx, zoom); err != nil {
-		t.Fatal(err)
-	}
+// A drag and a wheel turn arrive as trusted events, each stamped on the clock
+// the page's frames start by.
+func inputReachesThePage(ctx context.Context, s *Session, url string) func(*testing.T) {
+	return func(t *testing.T) {
+		if err := s.Navigate(ctx, url); err != nil {
+			t.Fatal(err)
+		}
+		drag := Actions{Mouse: []MouseStep{Move{X: 100, Y: 100}, Press{}, Move{X: 200, Y: 150, Over: 200 * time.Millisecond}, Release{}}}
+		if err := s.Perform(ctx, drag); err != nil {
+			t.Fatal(err)
+		}
+		zoom := Actions{Wheel: []WheelStep{Scroll{X: 200, Y: 150, DeltaY: 120}}}
+		if err := s.Perform(ctx, zoom); err != nil {
+			t.Fatal(err)
+		}
 
-	raw, err := s.ExecuteAsync(ctx, read)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var got seen
-	if err := json.Unmarshal(raw, &got); err != nil {
-		t.Fatalf("reading what the page saw: %v\n%s", err, raw)
-	}
+		raw, err := s.ExecuteAsync(ctx, read)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got seen
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatalf("reading what the page saw: %v\n%s", err, raw)
+		}
 
-	types := map[string]int{}
-	for _, e := range got.Seen {
-		types[e.Type]++
-		if !e.Trusted {
-			t.Errorf("%s was not trusted, so it came from script, not the browser's input", e.Type)
+		types := map[string]int{}
+		for _, e := range got.Seen {
+			types[e.Type]++
+			if !e.Trusted {
+				t.Errorf("%s was not trusted, so it came from script, not the browser's input", e.Type)
+			}
+			// On one clock, an event is stamped at or before it is handled, and
+			// not long before.
+			if lag := e.Now - e.Stamp; lag < -1 || lag > 1000 {
+				t.Errorf("%s stamped %.1f but handled at %.1f: not the page's clock", e.Type, e.Stamp, e.Now)
+			}
+			if e.Type == "wheel" && e.DeltaY <= 0 {
+				t.Errorf("wheel turned by %v, want down", e.DeltaY)
+			}
 		}
-		// On one clock, an event is stamped at or before it is handled, and
-		// not long before.
-		if lag := e.Now - e.Stamp; lag < -1 || lag > 1000 {
-			t.Errorf("%s stamped %.1f but handled at %.1f: not the page's clock", e.Type, e.Stamp, e.Now)
+		for _, want := range []string{"pointerdown", "pointermove", "pointerup", "wheel"} {
+			if types[want] == 0 {
+				t.Errorf("no %s reached the page; saw %v", want, types)
+			}
 		}
-		if e.Type == "wheel" && e.DeltaY <= 0 {
-			t.Errorf("wheel turned by %v, want down", e.DeltaY)
+		if lag := got.Now - got.Frame; lag < -1 || lag > 1000 {
+			t.Errorf("frame started %.1f but the clock read %.1f inside it: not the page's clock", got.Frame, got.Now)
 		}
+		t.Logf("saw %v; frame at %.1f, clock %.1f", types, got.Frame, got.Now)
 	}
-	for _, want := range []string{"pointerdown", "pointermove", "pointerup", "wheel"} {
-		if types[want] == 0 {
-			t.Errorf("no %s reached the page; saw %v", want, types)
-		}
-	}
-	if lag := got.Now - got.Frame; lag < -1 || lag > 1000 {
-		t.Errorf("frame started %.1f but the clock read %.1f inside it: not the page's clock", got.Frame, got.Now)
-	}
-	t.Logf("saw %v; frame at %.1f, clock %.1f", types, got.Frame, got.Now)
 }
 
 // The frame probe, fed real wheel input, hands back a recording that parses
 // and judges some frames: the probe and this client meet here and nowhere
 // else before a run.
-func probeRecordsIt(ctx context.Context, t *testing.T, s *Session, url string) {
-	if err := s.Navigate(ctx, url); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.ExecuteAsync(ctx, perf.Probe+"\n__boughProbe.start(arguments[0], arguments[1]);", perf.Quiet); err != nil {
-		t.Fatal(err)
-	}
+func probeRecordsIt(ctx context.Context, s *Session, url string) func(*testing.T) {
+	return func(t *testing.T) {
+		if err := s.Navigate(ctx, url); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.ExecuteAsync(ctx, perf.Probe+"\n__boughProbe.start(arguments[0], arguments[1]);", perf.Quiet); err != nil {
+			t.Fatal(err)
+		}
 
-	turns := make([]WheelStep, 20)
-	for i := range turns {
-		turns[i] = Scroll{X: 200, Y: 150, DeltaY: 40, Over: 16 * time.Millisecond}
-	}
-	if err := s.Perform(ctx, Actions{Wheel: turns}); err != nil {
-		t.Fatal(err)
-	}
+		turns := make([]WheelStep, 20)
+		for i := range turns {
+			turns[i] = Scroll{X: 200, Y: 150, DeltaY: 40, Over: 16 * time.Millisecond}
+		}
+		if err := s.Perform(ctx, Actions{Wheel: turns}); err != nil {
+			t.Fatal(err)
+		}
 
-	raw, err := s.ExecuteAsync(ctx, "__boughProbe.finish(arguments[0]);")
-	if err != nil {
-		t.Fatal(err)
+		raw, err := s.ExecuteAsync(ctx, "__boughProbe.finish(arguments[0]);")
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, err := perf.ParseRecording(raw)
+		if err != nil {
+			t.Fatalf("the probe's recording did not parse: %v\n%s", err, raw)
+		}
+		summary := perf.Summarize(r)
+		if summary.Frames == 0 {
+			t.Errorf("no frames judged: %+v", summary)
+		}
+		t.Logf("%+v", summary)
 	}
-	r, err := perf.ParseRecording(raw)
-	if err != nil {
-		t.Fatalf("the probe's recording did not parse: %v\n%s", err, raw)
-	}
-	summary := perf.Summarize(r)
-	if summary.Frames == 0 {
-		t.Errorf("no frames judged: %+v", summary)
-	}
-	t.Logf("%+v", summary)
 }
