@@ -1,6 +1,7 @@
 package scenario
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/nickelsec/bough/internal/webdriver"
@@ -76,5 +77,19 @@ func TestAPageWithNowhereToPointIsRefused(t *testing.T) {
 	}
 	if _, err := readGeometry([]byte(`{"stage":{"x":0,"y":0,"width":800,"height":600},"empty":{"x":1,"y":1},"prompts":[{"x":2,"y":2}]}`)); err != nil {
 		t.Errorf("a page with somewhere to point was refused: %v", err)
+	}
+}
+
+// Every scenario is found by its name, and a name no scenario has is refused
+// with the names there are.
+func TestAScenarioIsFoundByName(t *testing.T) {
+	for _, sc := range All {
+		got, err := Named(sc.Name)
+		if err != nil || got.Name != sc.Name {
+			t.Errorf("%s found %q, %v", sc.Name, got.Name, err)
+		}
+	}
+	if _, err := Named("pinch"); err == nil || !strings.Contains(err.Error(), "hover-sweep") {
+		t.Errorf("an unknown scenario failed with %v, want the scenarios there are", err)
 	}
 }

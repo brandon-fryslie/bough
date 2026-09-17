@@ -218,6 +218,7 @@ they are building.
 
 ```
 cmd/bough        the command
+cmd/boughperf    how smoothly the page draws, measured in real browsers
 internal/agent   the boundary between bough and the agents it reads
   .../claude     reading Claude Code
   .../codex      reading OpenAI Codex CLI rollouts

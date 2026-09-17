@@ -36,6 +36,18 @@ cover:
 fuzz:
 	go test -run=xxx -fuzz=FuzzReadRecords -fuzztime=60s ./internal/agent/claude
 
+# Plays every scenario on the page of a synthetic history in real browsers,
+# prints how smoothly each drew, and keeps every recording in perf-results/.
+# Opens browser windows, so CI never runs it. SIZE is small, medium or large;
+# BROWSERS, a comma separated list, defaults to every installed driver's.
+SIZE ?= medium
+REPEATS ?= 5
+BROWSERS ?=
+
+.PHONY: perf
+perf:
+	go run ./cmd/boughperf -size $(SIZE) -repeats $(REPEATS) -browsers "$(BROWSERS)"
+
 # Regenerates the embedded artwork and the subset fonts. Needs Python and
 # fontTools, which building does not.
 .PHONY: assets

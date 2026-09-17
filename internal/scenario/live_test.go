@@ -28,7 +28,7 @@ func TestScenariosPlayOnASyntheticHistory(t *testing.T) {
 	if *browsers == "" {
 		t.Skip("no -browsers to drive")
 	}
-	shape, err := synthetic.NewShape(24, 4, 5, 12)
+	shape, err := synthetic.Sized("small")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,24 +96,19 @@ func serve(t *testing.T, g graph.Graph) string {
 	}
 }
 
-// open starts b's driver and a session in it, both ended when the test is.
+// open opens a window in b, closed when the test ends.
 func open(ctx context.Context, t *testing.T, b webdriver.Browser) *webdriver.Session {
 	t.Helper()
-	d, err := webdriver.Start(ctx, b)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(d.Stop)
-	s, err := d.NewSession(ctx)
+	w, err := webdriver.Open(ctx, b)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		closing, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
-		if err := s.Close(closing); err != nil {
+		if err := w.Close(closing); err != nil {
 			t.Error(err)
 		}
 	})
-	return s
+	return w.Session
 }

@@ -20,10 +20,22 @@ the browser's driver. `go test ./internal/webdriver -browsers=chrome,safari`
 asks for it: Chrome needs the chromedriver matching its version on `PATH`, and
 Safari needs Settings > Developer > Allow remote automation turned on. Safari's
 driver drops most of the input it is sent, so in Safari only that the page
-draws frames is checked, and the input checks are skipped with that reason. `go test ./internal/scenario -browsers=chrome,safari` plays every
-scenario, the gestures worth measuring, on a synthetic history; in Safari the
-page is read for where the gestures would land, and playing is skipped for the
-same reason.
+draws frames is checked, and the input checks are skipped with that reason.
+`go test ./internal/scenario -browsers=chrome,safari` plays every scenario, the
+gestures worth measuring, on a synthetic history; in Safari the page is read
+for where the gestures would land, and playing is skipped for the same reason.
+
+`make perf` measures how smoothly the page draws. It plays every scenario five
+times in every browser whose driver is installed, on a synthetic history of
+`SIZE=small`, `medium` (the default) or `large`, and prints for each the
+median, 95th percentile and worst frame and how many frames were missed, judged
+against the display's own refresh rate. Input is shown as it arrived, since a
+driver can stretch a gesture it was asked to play quickly. Every recording and
+its summary are kept in `perf-results/`, with the commit measured, and it exits
+non-zero when any run fails or nothing was measured.
+`go run ./cmd/boughperf -h` lists the rest, including `-graph` to measure a
+graph written by `bough --json`. One run is noisy, so compare repeated runs
+taken on the same machine.
 
 Run `make lint test` before opening a pull request. CI runs the same commands
 on Linux, macOS and Windows.
