@@ -180,9 +180,10 @@ func (s Source) Sessions(projects ...agent.Project) ([]agent.Session, error) {
 			order = append(order, id)
 		}
 		// The session ran in the directory of its earliest rollout, whichever
-		// order the rollouts were read in.
-		if recs[0].Time().Before(g.began) {
-			g.dir, g.began = r.dir, recs[0].Time()
+		// order the rollouts were read in. A rollout with no time to its first
+		// line says nothing about which came first.
+		if began := recs[0].Time(); !began.IsZero() && (g.began.IsZero() || began.Before(g.began)) {
+			g.dir, g.began = r.dir, began
 		}
 		g.recs = append(g.recs, recs...)
 	}

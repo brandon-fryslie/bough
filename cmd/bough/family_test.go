@@ -276,3 +276,15 @@ func TestAPathTwoAgentsWorkedInNamesBoth(t *testing.T) {
 		t.Errorf("err = %v, want both projects named", err)
 	}
 }
+
+// An argument written as a path is never matched as a name: `bough .` where no
+// project is does not open one whose name holds a dot.
+func TestAPathWithNoProjectIsNotReadAsAName(t *testing.T) {
+	projects := []family.Project{alone("my.site", "/work/my.site", "claude-code")}
+	families := family.WithoutRepository(projects[0].Members, nil)
+	t.Chdir(t.TempDir())
+	_, err := choose(projects, families, ".", strings.NewReader(""), io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "no project matching") {
+		t.Errorf("err = %v, want no project", err)
+	}
+}

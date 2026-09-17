@@ -329,9 +329,11 @@ func choose(projects []family.Project, families *family.Resolver, arg string, in
 	// A path and a name answer the same way: one project opens, and several
 	// are named so the reader can say which. A place two agents worked in is
 	// two projects, and a path that quietly chose one hid the other.
-	matches := byPath(projects, families, arg)
-	if len(matches) == 0 {
-		matches = byName(projects, arg)
+	// An argument written as a path is only ever a path: `bough .` somewhere
+	// with no history once opened a project whose name held a dot.
+	matches := byName(projects, arg)
+	if dir, ok := place(arg); ok {
+		matches = byPath(projects, families.Resolve(dir))
 	}
 	switch len(matches) {
 	case 1:
@@ -460,21 +462,16 @@ func byName(projects []family.Project, arg string) []family.Project {
 	return matches
 }
 
-// byPath matches the projects of the family a directory belongs to: the one it
-// is known by, one of its members, or anywhere else its family reaches.
+// byPath matches the projects of the family a directory resolved to: the
+// directory it is known by, one of its members, or anywhere else it reaches.
 //
 // [LAW:one-source-of-truth] The directory is resolved rather than compared
 // with each member's path, so a path opens the same project the listing put
 // it under, whichever spelling it was written in.
-func byPath(projects []family.Project, families *family.Resolver, arg string) []family.Project {
-	dir, ok := place(arg)
-	if !ok {
-		return nil
-	}
-	want := families.Resolve(dir)
+func byPath(projects []family.Project, f family.Family) []family.Project {
 	var matches []family.Project
 	for _, p := range projects {
-		if p.Is(want) {
+		if p.Is(f) {
 			matches = append(matches, p)
 		}
 	}
