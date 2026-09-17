@@ -22,6 +22,11 @@
     return hit !== null && stage.contains(hit) && hit.closest(NODES) === null;
   }
 
+  // MARGIN is how far bare canvas has to stay bare around a point. Nodes keep
+  // a smallest size on screen as the view zooms out, so one just beside a
+  // still pointer can grow under it.
+  var MARGIN = 24;
+
   root.__boughPage = {
     drawn: function (done) {
       // The diagram's transform is set the first time the view is applied, and
@@ -48,7 +53,11 @@
       candidates.sort(function (a, b) {
         return Math.hypot(a.x - middle.x, a.y - middle.y) - Math.hypot(b.x - middle.x, b.y - middle.y);
       });
-      var empty = candidates.find(function (p) { return bare(stage, p.x, p.y); }) || null;
+      var empty = candidates.find(function (p) {
+        return [[0, 0], [-MARGIN, 0], [MARGIN, 0], [0, -MARGIN], [0, MARGIN]].every(function (d) {
+          return bare(stage, p.x + d[0], p.y + d[1]);
+        });
+      }) || null;
 
       // A node counts when its middle is on the stage and pointing there
       // reaches it, not a node drawn inside it or a control drawn over it.

@@ -55,9 +55,9 @@ func readGeometry(raw json.RawMessage) (Geometry, error) {
 // Run plays sc on the page at url in s and hands back how the page drew it.
 //
 // The pointer is put at the gesture's start before recording, since getting
-// there is not the gesture. A gesture that leaves the view as it found it is
-// an error rather than a recording, because what it recorded is a page at
-// rest.
+// there is not the gesture. A gesture that did not take as its scenario means
+// is an error rather than a recording, because what it recorded is not that
+// gesture.
 func Run(ctx context.Context, s *webdriver.Session, url string, sc Scenario) (perf.Recording, error) {
 	g, err := Open(ctx, s, url)
 	if err != nil {
@@ -89,7 +89,7 @@ func Run(ctx context.Context, s *webdriver.Session, url string, sc Scenario) (pe
 		return perf.Recording{}, err
 	}
 	if !sc.Took(before, after) {
-		return perf.Recording{}, fmt.Errorf("%s left the view as it found it, %+v, so it measured a page at rest", sc.Name, after)
+		return perf.Recording{}, fmt.Errorf("%s did not take as it means to, going from %+v to %+v, so its recording is not of that gesture", sc.Name, before, after)
 	}
 	r, err := perf.ParseRecording(raw)
 	if err != nil {

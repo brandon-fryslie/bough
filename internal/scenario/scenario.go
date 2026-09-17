@@ -49,8 +49,9 @@ type View struct {
 }
 
 // Scenario is one interaction: its name, the gesture it makes placed on a
-// page, and whether the view the gesture left shows it took. A gesture that
-// took nothing, a drag begun on a node say, would measure a page at rest.
+// page, and whether the view the gesture left shows it took as meant. A
+// gesture that took nothing, a drag begun on a node say, would measure a page
+// at rest, and one that took more would measure more than the gesture.
 type Scenario struct {
 	Name  string
 	Place func(Geometry) Gesture
@@ -123,12 +124,12 @@ var All = []Scenario{
 	{
 		Name:  "wheel-zoom-in",
 		Place: scroll(-8),
-		Took:  func(before, after View) bool { return after.Scale > before.Scale },
+		Took:  func(before, after View) bool { return after.Scale > before.Scale && after.Note == "" },
 	},
 	{
 		Name:  "wheel-zoom-out",
 		Place: scroll(8),
-		Took:  func(before, after View) bool { return after.Scale < before.Scale },
+		Took:  func(before, after View) bool { return after.Scale < before.Scale && after.Note == "" },
 	},
 	{
 		// From bare canvas across the nodes left to right, each one's note
@@ -142,7 +143,9 @@ var All = []Scenario{
 }
 
 // scroll places sixty small wheel turns of delta pixels on bare canvas, as a
-// trackpad reports a steady scroll, so the zoom is the only thing drawn.
+// trackpad reports a steady scroll, so the zoom is the only thing drawn. A
+// note up once it ends means a node came under the pointer, and hovering was
+// drawn too.
 func scroll(delta int) func(Geometry) Gesture {
 	return func(g Geometry) Gesture {
 		return Wheel{At: g.Empty, DeltaY: delta, Turns: 60, Every: mouse}
