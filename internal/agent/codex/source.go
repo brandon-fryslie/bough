@@ -207,6 +207,7 @@ func (s Source) Sessions(projects ...agent.Project) ([]agent.Session, error) {
 			Turns:    turns,
 			ParentID: g.parent,
 			Dir:      g.dir,
+			Source:   Agent().ID,
 		})
 	}
 

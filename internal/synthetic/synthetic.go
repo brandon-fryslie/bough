@@ -54,7 +54,14 @@ func pairs(sittings int) int {
 // sitting is how long every sitting lasts. Its prompts are spread across it.
 const sitting = 4 * time.Hour
 
-// History builds the graph a Shape describes.
+// The agents a synthetic history is written by: every sitting of History is
+// the first's, and Alongside adds the second's.
+const (
+	firstAgent  = "claude-code"
+	secondAgent = "codex"
+)
+
+// History builds the graph a Shape describes, all of it one agent's.
 //
 // Sittings fall two days apart. Tasks within a sitting grow in weight, every
 // third is hard so the crooked path is drawn, and every fourth ended in a
@@ -66,35 +73,62 @@ const sitting = 4 * time.Hour
 // the day squares differ in size, which is the weighting the layout test's
 // canvases were measured against.
 func History(s Shape) graph.Graph {
-	start := time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)
-	g := graph.Graph{Schema: graph.SchemaVersion, Project: graph.Project{Name: "synthetic"}}
+	return written(s, []string{firstAgent}, func(_ int, day time.Time) []time.Time {
+		return []time.Time{day}
+	})
+}
+
+// Alongside builds the graph a Shape describes twice over, by two agents
+// working the same days: every sitting of History, and beside each one a
+// second agent's sitting of the same shape. On every other day the second
+// starts an hour into the first, so the two overlap; on the rest it starts an
+// hour after the first ends, so they share the day and not the time. Links
+// join the first agent's sittings, as History's do.
+func Alongside(s Shape) graph.Graph {
+	return written(s, []string{firstAgent, secondAgent}, func(n int, day time.Time) []time.Time {
+		if n%2 == 0 {
+			return []time.Time{day, day.Add(time.Hour)}
+		}
+		return []time.Time{day, day.Add(sitting + time.Hour)}
+	})
+}
+
+// written builds a history whose day n holds one sitting for each agent,
+// starting at the times starts gives, which are in order.
+func written(s Shape, agents []string, starts func(n int, day time.Time) []time.Time) graph.Graph {
+	first := time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)
+	g := graph.Graph{Schema: graph.SchemaVersion, Project: graph.Project{Name: "synthetic", Agents: agents}}
 
 	for n := 0; n < s.sittings; n++ {
-		day := start.AddDate(0, 0, n*2)
-		goal := graph.Goal{
-			ID:     goalID(n),
-			Label:  "a sitting",
-			Period: day.Format("Mon 2 Jan"),
-			Stats:  graph.Stats{Start: day, End: day.Add(sitting), Edits: 12 * (n + 1)},
+		day := first.AddDate(0, 0, n*2)
+		for a, at := range starts(n, day) {
+			m := len(g.Goals)
+			goal := graph.Goal{
+				ID:     goalID(m),
+				Label:  "a sitting",
+				Period: day.Format("Mon 2 Jan"),
+				Agent:  agents[a],
+				Stats:  graph.Stats{Start: at, End: at.Add(sitting), Edits: 12 * (n + 1)},
+			}
+			clock := prompter{start: at, total: s.promptsPerSitting()}
+			for i := 0; i < s.tasks; i++ {
+				t := task(m, i, s.prompts, &clock)
+				goal.Stats.Turns += t.Stats.Turns
+				goal.Stats.Commits = append(goal.Stats.Commits, t.Stats.Commits...)
+				goal.Tasks = append(goal.Tasks, t)
+			}
+			g.Totals.Turns += goal.Stats.Turns
+			g.Totals.Edits += goal.Stats.Edits
+			g.Totals.Commits = append(g.Totals.Commits, goal.Stats.Commits...)
+			g.Goals = append(g.Goals, goal)
 		}
-		clock := prompter{day: day, total: s.promptsPerSitting()}
-		for i := 0; i < s.tasks; i++ {
-			t := task(n, i, s.prompts, &clock)
-			goal.Stats.Turns += t.Stats.Turns
-			goal.Stats.Commits = append(goal.Stats.Commits, t.Stats.Commits...)
-			goal.Tasks = append(goal.Tasks, t)
-		}
-		g.Totals.Turns += goal.Stats.Turns
-		g.Totals.Edits += goal.Stats.Edits
-		g.Totals.Commits = append(g.Totals.Commits, goal.Stats.Commits...)
-		g.Goals = append(g.Goals, goal)
 	}
 
-	g.Links = links(s)
+	g.Links = links(s, len(agents))
 	return g
 }
 
-// goalID names sitting n. Tasks and links name sittings through it too.
+// goalID names the n-th goal. Tasks and links name sittings through it too.
 func goalID(n int) string {
 	return "g" + strconv.Itoa(n+1)
 }
@@ -112,7 +146,7 @@ func (s Shape) promptsPerSitting() int {
 // start to just before its end, so no prompt lands outside the sitting it
 // belongs to however many the sitting holds.
 type prompter struct {
-	day   time.Time
+	start time.Time
 	total int
 	next  int
 }
@@ -121,12 +155,12 @@ func (c *prompter) at() time.Time {
 	// Dividing first keeps the product inside a Duration however many prompts
 	// there are; the step stays well above a nanosecond for any sitting that
 	// could be held in memory.
-	t := c.day.Add(sitting / time.Duration(c.total) * time.Duration(c.next))
+	t := c.start.Add(sitting / time.Duration(c.total) * time.Duration(c.next))
 	c.next++
 	return t
 }
 
-// task is the i-th task of sitting n.
+// task is the i-th task of the n-th goal.
 func task(n, i, prompts int, clock *prompter) graph.Task {
 	turns := make([]graph.Turn, i%prompts+1)
 	for p := range turns {
@@ -149,7 +183,8 @@ func task(n, i, prompts int, clock *prompter) graph.Task {
 	}
 }
 
-// links chooses which pairs of sittings share files.
+// links chooses which pairs of sittings share files. Each day holds per
+// sittings, and a link joins the first of each day's.
 //
 // Taking pairs in order would hang every link off the first sitting, while a
 // real project comes back to a file after a day and after a month alike. So
@@ -160,15 +195,15 @@ func task(n, i, prompts int, clock *prompter) graph.Task {
 //
 // Nothing is built for the pairs no link takes, so the cost follows the links
 // asked for rather than the square of the sittings.
-func links(s Shape) []graph.Link {
+func links(s Shape, per int) []graph.Link {
 	out := make([]graph.Link, s.links)
 	total := pairs(s.sittings)
 	step := scatter(total)
 	for k := range out {
 		from, to := unrank(k*step%total, s.sittings)
 		out[k] = graph.Link{
-			From:   goalID(from),
-			To:     goalID(to),
+			From:   goalID(from * per),
+			To:     goalID(to * per),
 			Files:  []string{"src/shared" + strconv.Itoa(k+1) + ".go"},
 			Weight: k%5 + 1,
 		}

@@ -31,7 +31,7 @@ import (
 func fold(sessions []agent.Session) []agent.Session {
 	here := make(map[string]bool, len(sessions))
 	for _, s := range sessions {
-		here[s.ID] = true
+		here[whose(s.Source, s.ID)] = true
 	}
 
 	// A session is folded only into a parent that is actually present. One
@@ -40,8 +40,9 @@ func fold(sessions []agent.Session) []agent.Session {
 	kids := map[string][]agent.Session{}
 	keep := make([]agent.Session, 0, len(sessions))
 	for _, s := range sessions {
-		if s.ParentID != "" && s.ParentID != s.ID && here[s.ParentID] {
-			kids[s.ParentID] = append(kids[s.ParentID], s)
+		parent := whose(s.Source, s.ParentID)
+		if s.ParentID != "" && s.ParentID != s.ID && here[parent] {
+			kids[parent] = append(kids[parent], s)
 			continue
 		}
 		keep = append(keep, s)
@@ -54,17 +55,22 @@ func fold(sessions []agent.Session) []agent.Session {
 	// it delegated has been merged into it. Walking the chain from each
 	// surviving session downward reaches the deepest work first.
 	for i := range keep {
-		mergeInto(&keep[i], collect(kids, keep[i].ID))
+		mergeInto(&keep[i], collect(kids, whose(keep[i].Source, keep[i].ID)))
 	}
 	return keep
 }
+
+// whose names a session among every agent's. An ID is its own agent's to
+// give, so a session only ever delegates to another of the same agent, and
+// two agents that happened to use one ID are still two sessions.
+func whose(source, id string) string { return source + " " + id }
 
 // collect gathers a session's delegated work, deepest first, so that each child
 // already carries its own sub-agents by the time it is merged upward.
 func collect(kids map[string][]agent.Session, id string) []agent.Session {
 	own := append([]agent.Session(nil), kids[id]...)
 	for i := range own {
-		if deeper := collect(kids, own[i].ID); len(deeper) > 0 {
+		if deeper := collect(kids, whose(own[i].Source, own[i].ID)); len(deeper) > 0 {
 			mergeInto(&own[i], deeper)
 		}
 	}

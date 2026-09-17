@@ -28,7 +28,7 @@ var made = []agent.MadeFor{func(p string) (agent.Made, bool) {
 
 // alone is a project worked in the one directory it is known by.
 func alone(p agent.Project) family.Project {
-	return family.Project{Path: p.Path, Agent: p.Source, Members: []agent.Project{p}}
+	return family.Project{Path: p.Path, Members: []agent.Project{p}}
 }
 
 func turn(day, min int, text string, edits ...string) agent.Turn {
@@ -52,8 +52,9 @@ const otherRequest = "the search index needs to rebuild itself whenever a docume
 func sample() (agent.Project, []agent.Session) {
 	p := agent.Project{Name: "example", Path: "/work/example", Source: "claude-code"}
 	s := []agent.Session{{
-		ID:    "s1",
-		Title: "Working on the exporter",
+		ID:     "s1",
+		Source: "claude-code",
+		Title:  "Working on the exporter",
 		Turns: []agent.Turn{
 			turn(1, 0, longRequest, "export.go"),
 			turn(1, 20, "keep going", "export.go"),
@@ -74,7 +75,7 @@ func TestBuildProducesTheHierarchy(t *testing.T) {
 	if g.Schema != SchemaVersion {
 		t.Errorf("schema = %d, want %d", g.Schema, SchemaVersion)
 	}
-	if g.Project.Name != "example" || g.Project.Agent != "claude-code" {
+	if g.Project.Name != "example" || !slices.Equal(g.Project.Agents, []string{"claude-code"}) {
 		t.Errorf("project = %+v", g.Project)
 	}
 	// Two days of work, so two sittings.
@@ -427,7 +428,7 @@ func TestBuildDoesNotChangeTheSessionsItIsGiven(t *testing.T) {
 // says which directories those were.
 func TestBuildListsTheDirectoriesItRead(t *testing.T) {
 	const tree = "/work/app/.claude/worktrees/calm-river"
-	p := family.Project{Path: "/work/app", Agent: "claude-code", Members: []agent.Project{
+	p := family.Project{Path: "/work/app", Members: []agent.Project{
 		{Name: "app", Path: "/work/app", Source: "claude-code"},
 		{Name: "calm-river", Path: tree, Source: "claude-code"},
 	}}

@@ -289,38 +289,64 @@ func ancestors(p string) iter.Seq[string] {
 	}
 }
 
-// Project is one agent's history of one family: what a person means by a
-// project. The worktrees, subdirectories and scratchpads that agent worked in
-// are its members, rather than projects of their own named after whatever
-// the agent called a worktree.
-//
-// A family two agents worked on is two projects, one per agent. Whether those
-// should be one is a separate question from whether two directories are one.
+// Project is the history of one family: what a person means by a project.
+// The worktrees, subdirectories and scratchpads worked in are its members,
+// rather than projects of their own named after whatever the agent called a
+// worktree, and so is every agent's history of them. A family is its
+// directories, whichever agents worked in them.
 type Project struct {
 	// Path is the directory the family is known by, as Family.Name spells it.
 	// It need not have history of its own: a repository whose every sitting
 	// ran in a worktree is still named after its main tree.
 	Path string
 
-	// Agent is the ID of the agent whose history this is.
-	Agent string
-
-	// Members are the directories this agent has history in that belong to
-	// the family, ordered by path. There is always at least one.
+	// Members are the directories with history that belong to the family,
+	// one for each agent that has history in each, ordered by path. There is
+	// always at least one. Each says which agent's history it is.
 	Members []agent.Project
 }
 
 // Name is what a person calls the project: the last element of its path.
 func (p Project) Name() string { return path.Base(slashed(p.Path)) }
 
-// Key identifies the project among all of them: its family and its agent.
-// Two projects with the same key are the same project, however their members
-// were spelled.
-func (p Project) Key() string { return agent.NormalisePath(p.Path) + " " + p.Agent }
+// Key identifies the project among all of them: its family. Two projects with
+// the same key are the same project, however their members were spelled and
+// whichever agents worked in them.
+func (p Project) Key() string { return agent.NormalisePath(p.Path) }
 
-// Is reports whether the project is one of family f's: one agent's history
-// of it.
-func (p Project) Is(f Family) bool { return agent.NormalisePath(p.Path) == f.Key() }
+// Is reports whether the project is family f's.
+func (p Project) Is(f Family) bool { return p.Key() == f.Key() }
+
+// Agents are the IDs of the agents with history among the members, each once
+// and in the order IDs sort. The order is the IDs' own so it is the same on
+// every project, whatever order the members were found in.
+func (p Project) Agents() []string {
+	ids := make([]string, len(p.Members))
+	for i, m := range p.Members {
+		ids[i] = m.Source
+	}
+	slices.Sort(ids)
+	return slices.Compact(ids)
+}
+
+// Of is the members holding one agent's history, in member order.
+func (p Project) Of(agentID string) []agent.Project {
+	return slices.DeleteFunc(slices.Clone(p.Members), func(m agent.Project) bool { return m.Source != agentID })
+}
+
+// Directories are the member directories, each once however many agents
+// worked there, in member order and spelled as the first member there was.
+func (p Project) Directories() []string {
+	var dirs []string
+	seen := map[string]bool{}
+	for _, m := range p.Members {
+		if key := agent.NormalisePath(m.Path); !seen[key] {
+			seen[key] = true
+			dirs = append(dirs, m.Path)
+		}
+	}
+	return dirs
+}
 
 // Holds reports whether a directory is this project's own: the directory the
 // family is known by, or one of its members.
@@ -330,25 +356,20 @@ func (p Project) Is(f Family) bool { return agent.NormalisePath(p.Path) == f.Key
 // repository. That keeps the question answerable where only sessions are.
 func (p Project) Holds(dir string) bool {
 	want := agent.NormalisePath(dir)
-	return want == agent.NormalisePath(p.Path) || slices.ContainsFunc(p.Members, func(m agent.Project) bool {
+	return want == p.Key() || slices.ContainsFunc(p.Members, func(m agent.Project) bool {
 		return agent.NormalisePath(m.Path) == want
 	})
 }
 
 // Projects gathers the projects the resolver was made from into one per
-// family and agent, in the order the agents first appear and then by name
-// and path.
+// family, by name and then by path.
 func (r *Resolver) Projects() []Project {
 	var out []Project
 	at := map[string]int{}
-	agents := map[string]int{}
 	for _, p := range r.projects {
-		if _, ok := agents[p.Source]; !ok {
-			agents[p.Source] = len(agents)
-		}
 		// [LAW:one-source-of-truth] A member's family is what Resolve says,
 		// the same answer anything else asking about that directory gets.
-		group := Project{Path: r.Resolve(p.Path).Name, Agent: p.Source}
+		group := Project{Path: r.Resolve(p.Path).Name}
 		i, ok := at[group.Key()]
 		if !ok {
 			i = len(out)
@@ -359,13 +380,10 @@ func (r *Resolver) Projects() []Project {
 	}
 	for i := range out {
 		slices.SortStableFunc(out[i].Members, func(a, b agent.Project) int {
-			return strings.Compare(a.Path, b.Path)
+			return cmp.Or(strings.Compare(a.Path, b.Path), strings.Compare(a.Source, b.Source))
 		})
 	}
 	slices.SortStableFunc(out, func(a, b Project) int {
-		if a.Agent != b.Agent {
-			return agents[a.Agent] - agents[b.Agent]
-		}
 		// Then by path, so two projects of one name keep an order between runs.
 		return cmp.Or(strings.Compare(a.Name(), b.Name()), strings.Compare(a.Path, b.Path))
 	})

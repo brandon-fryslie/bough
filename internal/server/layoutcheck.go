@@ -239,9 +239,62 @@ for (const file of files) {
     }
 
     // Days run left to right through time, and a diagram that doubles back
-    // is telling a lie about the order the work happened in.
-    for (let i = 1; i < out.days.length; i++) {
-      check(tag + " days run forward", out.days[i].x > out.days[i - 1].x);
+    // is telling a lie about the order the work happened in. Each agent's
+    // days run forward on their own side of the spine, and every column
+    // starts clear of everything before it.
+    const lastOnSide = {};
+    for (let i = 0; i < out.days.length; i++) {
+      const day = out.days[i];
+      if (day.lane in lastOnSide) {
+        check(tag + " days run forward", day.x > lastOnSide[day.lane], day.id);
+      }
+      lastOnSide[day.lane] = day.x;
+      if (i > 0 && day.column !== out.days[i - 1].column) {
+        check(tag + " a column starts after everything before it",
+          out.days.slice(0, i).every(function (d) { return day.x > d.x; }), day.id);
+      }
+    }
+
+    const byId = {};
+    out.days.forEach(function (day) { byId[day.id] = day; });
+    const agents = graph.project.agents || [];
+    for (const day of out.days) {
+      // With one agent every day sits on the spine, exactly as before there
+      // were two.
+      if (agents.length < 2) {
+        check(tag + " one agent's days sit on the spine", day.y === out.spineY, day.id);
+      }
+
+      // Every overlap drawn is true: another agent's sitting that ran at the
+      // same time, which says the same of this one, in the same column.
+      for (const id of day.overlaps) {
+        const other = byId[id];
+        const a = day.goal.stats, b = other.goal.stats;
+        check(tag + " an overlap is another agent's", day.goal.agent !== other.goal.agent, day.id + " " + id);
+        check(tag + " an overlap happened at the same time",
+          new Date(a.start) <= new Date(b.end) && new Date(b.start) <= new Date(a.end), day.id + " " + id);
+        check(tag + " an overlap goes both ways", other.overlaps.indexOf(day.id) !== -1, day.id + " " + id);
+        check(tag + " sittings that overlapped share a column", day.column === other.column, day.id + " " + id);
+      }
+    }
+
+    // Two sittings of different agents that make a column between them start
+    // in line, one either side of the spine, which is how the overlap shows.
+    const columns = {};
+    out.days.forEach(function (day) { (columns[day.column] = columns[day.column] || []).push(day); });
+    for (const key of Object.keys(columns)) {
+      const pair = columns[key];
+      if (pair.length !== 2 || pair[0].goal.agent === pair[1].goal.agent) continue;
+      check(tag + " sittings drawn together start in line", pair[0].x === pair[1].x, pair[0].id + " " + pair[1].id);
+      check(tag + " sittings drawn together sit either side of the spine",
+        (pair[0].y - out.spineY) * (pair[1].y - out.spineY) < 0, pair[0].id + " " + pair[1].id);
+
+      // And on a phone, at the scale the view opens at there, the two squares
+      // are still two squares with a gap between them.
+      const r = { w: 390 - 32, h: 844 - 32 };
+      const home = L.homeScale({ x: seen.x0, y: seen.y0, width: cw, height: ch + 30 }, r, out.spine);
+      const gap = (Math.abs(pair[0].y - pair[1].y) - (pair[0].size + pair[1].size) / 2) * home;
+      check(tag + " squares drawn together stay apart on a phone", gap >= 4, gap.toFixed(1) + "px");
     }
 
     // Size carries meaning, so it has to stay inside the range that reads.

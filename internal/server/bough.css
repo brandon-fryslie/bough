@@ -210,9 +210,21 @@ body.reading #stage { right: var(--drawer); }
   white-space: nowrap;
 }
 
-/* A graph with no agent has no badge rather than an empty pill. */
-.mark-agent:empty {
-  display: none;
+/* The agents sit together on the name's line, and wrap as one group. */
+.mark-agents {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+/* The key: the shape an agent's days and tasks are drawn in, beside its name.
+   In the days' own brown, so it reads as the thing it names. */
+.key-mark {
+  width: 0.62rem;
+  height: 0.62rem;
+  margin-right: 0.3rem;
+  vertical-align: -0.08rem;
+  fill: var(--bark);
 }
 
 .mark .where {
@@ -671,6 +683,20 @@ body.nothing .empty { display: flex; }
 }
 
 .day.lit > .day-date { fill: var(--ink); }
+
+/* Another agent's sitting that was under way at the same time as the one
+   hovered or being read. Hollowed out rather than recoloured: a brown square
+   gone to an outline reads in greyscale, and it borrows nothing from the rust
+   that means hard work or the olive that means lit. */
+.day.together > .day-node,
+.day.together-chosen > .day-node {
+  fill: var(--ground);
+  stroke: var(--ink);
+  stroke-width: 2.6;
+}
+
+.day.together > .day-date,
+.day.together-chosen > .day-date { text-decoration: underline; }
 
 .node.chosen {
   fill: var(--leaf);

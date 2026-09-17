@@ -27,10 +27,10 @@ import (
 // test or a measurement run points its own client at it. Opening the desktop
 // browser from in here made every one of those open a stray window.
 //
-// agentName is the agent that wrote the history, spelled for a person. It is
-// passed in rather than looked up so that the page takes its names from the
-// same place the terminal does, without this package learning about agents.
-func Serve(ctx context.Context, g graph.Graph, agentName string, announce func(url string)) error {
+// named spells an agent's ID for a person. It is passed in rather than looked
+// up so that the page takes its names from the same place the terminal does,
+// without this package learning about agents.
+func Serve(ctx context.Context, g graph.Graph, named func(agentID string) string, announce func(url string)) error {
 	// Port zero asks the operating system for a free one, which avoids both
 	// guessing and colliding with whatever else is running.
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -39,7 +39,7 @@ func Serve(ctx context.Context, g graph.Graph, agentName string, announce func(u
 	}
 	defer func() { _ = listener.Close() }()
 
-	page, err := render(g, agentName)
+	page, err := render(g, named)
 	if err != nil {
 		return err
 	}
@@ -103,7 +103,7 @@ func routes(page []byte) http.Handler {
 // the template package drags in reflection and the crypto tree behind its
 // contextual escaping. That cost eight megabytes of binary for four
 // replacements that need one escaping rule between them.
-func render(g graph.Graph, agentName string) ([]byte, error) {
+func render(g graph.Graph, named func(agentID string) string) ([]byte, error) {
 	parts := map[string]string{}
 	for _, name := range []string{"index.html", "fonts.css", "bough.css", "layout.js", "bough.js"} {
 		body, err := readAsset(name)
@@ -120,7 +120,7 @@ func render(g graph.Graph, agentName string) ([]byte, error) {
 
 	replace := strings.NewReplacer(
 		"{{.Title}}", escapeHTML(g.Project.Name),
-		"{{.Agent}}", escapeHTML(agentName),
+		"{{.Agents}}", agents(g.Project.Agents, named),
 		"{{.Fonts}}", parts["fonts.css"],
 		"{{.CSS}}", parts["bough.css"],
 		"{{.Layout}}", parts["layout.js"],
@@ -128,6 +128,17 @@ func render(g graph.Graph, agentName string) ([]byte, error) {
 		"{{.Graph}}", escapeScript(string(data)),
 	)
 	return []byte(replace.Replace(parts["index.html"])), nil
+}
+
+// agents is the key naming every agent whose history the page draws, one
+// entry each in the order the graph lists them, which is the order the page
+// gives each its mark in.
+func agents(ids []string, named func(agentID string) string) string {
+	var b strings.Builder
+	for _, id := range ids {
+		fmt.Fprintf(&b, `<span class="mark-agent" data-agent="%s">%s</span>`, escapeHTML(id), escapeHTML(named(id)))
+	}
+	return b.String()
 }
 
 // escapeHTML makes text safe to drop into the page body. Project names come
