@@ -12,7 +12,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nickelsec/bough/internal/agent"
 	"github.com/nickelsec/bough/internal/agent/registry"
 	"github.com/nickelsec/bough/internal/family"
 	"github.com/nickelsec/bough/internal/repo"
@@ -86,15 +85,15 @@ func TestListShowsOneRowPerFamily(t *testing.T) {
 		// A path is listed the way the host spells it.
 		listing := filepath.ToSlash(out.String())
 		want := []string{
-			"app [Claude Code] /work/app 6 prompts in 3 directories",
-			"draft [Claude Code] /writing/draft 5 prompts",
+			"app /work/app Claude Code 6 prompts in 3 directories",
+			"draft /writing/draft Claude Code 5 prompts",
 			// Containing the repository does not make it the home directory's.
-			"work [Claude Code] /work 4 prompts",
+			"work /work Claude Code 4 prompts",
 		}
 		if strings.Join(rows, "\n") != strings.Join(want, "\n") {
 			t.Errorf("with %q the rows are\n%s\nwant\n%s", flags, strings.Join(rows, "\n"), strings.Join(want, "\n"))
 		}
-		for _, member := range []string{tree + "  2 prompts", pad + "  1 prompts"} {
+		for _, member := range []string{tree + "  Claude Code 2 prompts", pad + "  Claude Code 1 prompts"} {
 			if !strings.Contains(listing, member) {
 				t.Errorf("with %q the listing does not show %q:\n%s", flags, member, listing)
 			}
@@ -263,17 +262,6 @@ func TestAnArgumentIsAPlaceWhenWrittenAsOne(t *testing.T) {
 		if _, got := place(arg); got != want {
 			t.Errorf("place(%q) = %v, want %v", arg, got, want)
 		}
-	}
-}
-
-// A place two agents worked in is two projects, and a path names both rather
-// than quietly opening one.
-func TestAPathTwoAgentsWorkedInNamesBoth(t *testing.T) {
-	projects := []family.Project{alone("app", app, "claude-code"), alone("app", app, "codex")}
-	families := family.WithoutRepository([]agent.Project{projects[0].Members[0], projects[1].Members[0]}, nil)
-	_, err := choose(projects, families, app, strings.NewReader(""), io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "several projects") {
-		t.Errorf("err = %v, want both projects named", err)
 	}
 }
 

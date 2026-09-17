@@ -21,7 +21,7 @@ func TestListNamesTheAgentForEveryProject(t *testing.T) {
 	if err := run([]string{"--list", "--root", root}, &out, &errs); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "[Claude Code]") {
+	if !strings.Contains(out.String(), "Claude Code 1 prompts") {
 		t.Errorf("a Claude project did not say so:\n%s", out.String())
 	}
 }
@@ -44,13 +44,13 @@ func TestListColumnsLineUp(t *testing.T) {
 		t.Fatalf("expected a line per project, got %d:\n%s", len(lines), out.String())
 	}
 
-	want := strings.Index(lines[0], "[")
+	want := strings.Index(lines[0], "Claude Code")
 	if want < 0 {
-		t.Fatalf("no agent column in %q", lines[0])
+		t.Fatalf("no count column in %q", lines[0])
 	}
 	for _, line := range lines[1:] {
-		if at := strings.Index(line, "["); at != want {
-			t.Errorf("agent column starts at %d here and %d on the first row:\n%s",
+		if at := strings.Index(line, "Claude Code"); at != want {
+			t.Errorf("count column starts at %d here and %d on the first row:\n%s",
 				at, want, out.String())
 		}
 	}
@@ -120,20 +120,25 @@ func TestListSaysWhenAHistoryCannotBeRead(t *testing.T) {
 }
 
 // Across several directories, one that failed to read does not make the
-// project unreadable, since the others may simply be empty.
+// project unreadable, since the others may simply be empty. Each agent's share
+// is judged on its own directories.
 func TestListDoesNotCallSeveralDirectoriesUnreadableForOneFailure(t *testing.T) {
 	for _, c := range []struct {
-		t    tally
+		c    count
 		want string
 	}{
-		{tally{prompts: 3, dirs: 1}, "3 prompts"},
-		{tally{prompts: 6, dirs: 3}, "6 prompts in 3 directories"},
-		{tally{dirs: 1, unread: true}, "could not be read"},
-		{tally{prompts: 2, dirs: 1, unread: true}, "2 prompts, some could not be read"},
-		{tally{dirs: 2, unread: true}, "0 prompts in 2 directories, some could not be read"},
+		{count{dirs: 1, agents: []tally{{agent: "Codex", prompts: 3, dirs: 1}}}, "Codex 3 prompts"},
+		{count{dirs: 3, agents: []tally{{agent: "Codex", prompts: 6, dirs: 3}}}, "Codex 6 prompts in 3 directories"},
+		{count{dirs: 1, agents: []tally{{agent: "Codex", dirs: 1, unread: true}}}, "Codex could not be read"},
+		{count{dirs: 1, agents: []tally{{agent: "Codex", prompts: 2, dirs: 1, unread: true}}}, "Codex 2 prompts (some could not be read)"},
+		{count{dirs: 2, agents: []tally{{agent: "Codex", dirs: 2, unread: true}}}, "Codex 0 prompts (some could not be read) in 2 directories"},
+		{count{dirs: 2, agents: []tally{
+			{agent: "Claude Code", dirs: 1, unread: true},
+			{agent: "Codex", prompts: 4, dirs: 2},
+		}}, "Claude Code could not be read and Codex 4 prompts in 2 directories"},
 	} {
-		if got := c.t.say(); got != c.want {
-			t.Errorf("%+v says %q, want %q", c.t, got, c.want)
+		if got := c.c.say(); got != c.want {
+			t.Errorf("%+v says %q, want %q", c.c, got, c.want)
 		}
 	}
 }

@@ -28,6 +28,16 @@ Notable changes, newest first. Format follows
 
 ### Changed
 
+- **The JSON schema is now 3.** `project.agent` is now `project.agents`, the
+  agents whose history the graph holds, and every goal names its own agent in
+  `agent`. A project is its directories, whichever agents worked in them, so a
+  directory both Claude Code and Codex worked in is one row in `--list` and the
+  chooser, naming each agent with its own count, and one page and one text
+  view holding both agents' sittings in time order. `--agent` still reads one
+  agent's history. On the page each agent has its own shape and its own side
+  of the spine, a key names them, and sittings of the two that ran at the same
+  time start in line and light up together.
+
 - A turn another agent handed over carries its task name in the JSON as
   `task`, and the page and terminal show it as "task from an agent: …", which
   search also finds. A hand-off shows every fact recorded, for example

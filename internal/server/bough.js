@@ -30,6 +30,53 @@
   // Small on purpose: it says the work landed, and it must not read as a score.
   var SHIPPED_R = 1.7;
 
+  // The agents whose history this is, in the order the graph lists them, and
+  // each one's name as Go spelled it into the key at the top of the page.
+  var agents = graph.project.agents || [];
+  var names = {};
+  document.querySelectorAll("#agents [data-agent]").forEach(function (entry) {
+    names[entry.getAttribute("data-agent")] = entry.textContent;
+  });
+
+  // The shape each agent's days and tasks are drawn in, by its place in that
+  // list.
+  //
+  // The first is the square every day and task has always been, so a history
+  // with one agent draws exactly as it did. The second agent's are diamonds.
+  // They differ in outline rather than colour, so the two still tell apart in
+  // greyscale, and nothing about them can be mistaken for the rust that marks
+  // hard work. A diamond is drawn a little smaller than the square it stands
+  // for, since its corners reach further.
+  //
+  // corner is where the commit mark sits inside the shape: the top right
+  // corner of a square, the top point of a diamond, inset so the dot clears
+  // the stroke on the smallest task drawn.
+  var SHAPES = [
+    {
+      name: "square", turn: 0, side: 1,
+      corner: function (half, r) {
+        var inset = r + half * 0.4;
+        return { x: half - inset, y: inset - half };
+      }
+    },
+    {
+      name: "diamond", turn: 45, side: 0.85,
+      corner: function (half, r) {
+        return { x: 0, y: r * Math.SQRT2 + half * 0.4 - half * 0.85 * Math.SQRT2 };
+      }
+    }
+  ];
+
+  function shapeOf(goal) {
+    return SHAPES[agents.indexOf(goal.agent) % SHAPES.length];
+  }
+
+  // whose names a sitting's agent after its date, where there is more than one
+  // agent to tell apart. With one, the key at the top has already said it.
+  function whose(goal) {
+    return agents.length > 1 ? "  ·  " + names[goal.agent] : "";
+  }
+
   var sized = [];
 
   // Two scales worth naming.
@@ -183,22 +230,25 @@
   }
 
   function drawDay(day) {
-    var g = el("g", { class: "day", "data-id": day.id });
+    var shape = shapeOf(day.goal);
+    var g = el("g", { class: "day " + shape.name, "data-id": day.id });
 
     day.tasks.forEach(function (task) {
-      g.appendChild(drawTask(task));
+      g.appendChild(drawTask(task, shape));
     });
 
     var box = el("rect", { rx: 2, class: "node day-node" });
-    square(box, day, day.size, FLOOR.day);
+    square(box, day, day.size, FLOOR.day, shape);
     day.node = box;
     g.appendChild(box);
 
     // The date is the only label showing at rest, since it is the one thing
-    // you need to read the diagram left to right.
+    // you need to read the diagram left to right. It sits on the far side of
+    // the square from the spine, so the dates of two sittings drawn together
+    // above and below it stay clear of each other's squares.
     var date = el("text", {
       x: day.x,
-      y: day.y + day.size / 2 + 20,
+      y: day.lean < 0 ? day.y - day.size / 2 - 10 : day.y + day.size / 2 + 20,
       class: "day-date",
       "text-anchor": "middle"
     });
@@ -209,7 +259,7 @@
     return g;
   }
 
-  function drawTask(task) {
+  function drawTask(task, shape) {
     var g = el("g", {
       class: "task" + (task.hard ? " hard" : ""),
       "data-id": task.id,
@@ -218,7 +268,7 @@
     });
 
     var box = el("rect", { rx: 2, class: "node task-node" });
-    square(box, task, task.size, FLOOR.task);
+    square(box, task, task.size, FLOOR.task, shape);
     task.node = box;
     g.appendChild(box);
 
@@ -261,8 +311,9 @@
   }
 
   // square and round remember what a node should be so resize can redraw it.
-  function square(node, at, natural, floor) {
-    sized.push({ node: node, at: at, natural: natural, floor: floor, box: true });
+  function square(node, at, natural, floor, shape) {
+    node.setAttribute("transform", "rotate(" + shape.turn + " " + at.x + " " + at.y + ")");
+    sized.push({ node: node, at: at, natural: natural, floor: floor, box: true, shape: shape });
     resize(sized[sized.length - 1]);
   }
 
@@ -289,10 +340,11 @@
         " L" + x + "," + y +
         " L" + (x - on) + "," + (y + on * 0.46));
     } else if (item.box) {
-      item.node.setAttribute("x", item.at.x - half);
-      item.node.setAttribute("y", item.at.y - half);
-      item.node.setAttribute("width", on);
-      item.node.setAttribute("height", on);
+      var side = on * item.shape.side;
+      item.node.setAttribute("x", item.at.x - side / 2);
+      item.node.setAttribute("y", item.at.y - side / 2);
+      item.node.setAttribute("width", side);
+      item.node.setAttribute("height", side);
 
       // The shipped mark rides the corner of the square it belongs to, so it
       // has to move whenever the square is resized against the zoom. It sits
@@ -308,10 +360,10 @@
         // 0.13 and a pad of 0.2 the dot clears the inside of the stroke by a
         // full unit even on the smallest task drawn.
         var r = Math.max(on * 0.13, SHIPPED_R / view.scale);
-        var inset = r + on * 0.2;
+        var corner = item.shape.corner(half, r);
         item.at.mark.setAttribute("r", r);
-        item.at.mark.setAttribute("cx", item.at.x + half - inset);
-        item.at.mark.setAttribute("cy", item.at.y - half + inset);
+        item.at.mark.setAttribute("cx", item.at.x + corner.x);
+        item.at.mark.setAttribute("cy", item.at.y + corner.y);
       }
     } else {
       item.node.setAttribute("r", half);
@@ -635,6 +687,7 @@
     });
     var node = host.querySelector('[data-id="' + cssEscape(item.id) + '"]');
     if (node) node.classList.add("chosen");
+    alongside(item, "together-chosen");
 
     openReader(item);
   }
@@ -646,6 +699,7 @@
     host.querySelectorAll(".chosen").forEach(function (n) {
       n.classList.remove("chosen");
     });
+    alongside(null, "together-chosen");
   }
 
   // ---- hovering -----------------------------------------------------------
@@ -665,7 +719,7 @@
   // dim drops every highlight. Nodes nest, so leaving one is not enough on
   // its own to know nothing is lit any more.
   function dim() {
-    ["lit", "lit-hard"].forEach(function (cls) {
+    ["lit", "lit-hard", "together"].forEach(function (cls) {
       host.querySelectorAll("." + cls).forEach(function (n) {
         n.classList.remove(cls);
       });
@@ -701,6 +755,7 @@
     // path does.
     var chain = ancestry(item);
     chain.forEach(function (step) { mark(step.id); });
+    alongside(item, "together");
 
     // A hard task keeps its own colour when lit. Highlighting it green would
     // throw away the one thing the drawing says about it.
@@ -712,6 +767,22 @@
         if (wire) wire.classList.add("lit-hard");
       });
     }
+  }
+
+  // alongside marks the sittings of another agent that were under way at the
+  // same time as the one a node belongs to, and unmarks every other, so the
+  // work the two agents did together lights as one. Given no node, it only
+  // unmarks. The layout worked out which they were; this only draws it.
+  function alongside(item, cls) {
+    host.querySelectorAll(".day." + cls).forEach(function (n) {
+      n.classList.remove(cls);
+    });
+    var chain = item ? ancestry(item) : [];
+    var day = chain[chain.length - 1];
+    (day ? day.overlaps : []).forEach(function (id) {
+      var n = host.querySelector('.day[data-id="' + cssEscape(id) + '"]');
+      if (n) n.classList.add(cls);
+    });
   }
 
   // hardAt says whether the work under this node was scored as hard, which for
@@ -776,7 +847,7 @@
         if (hashes) pop.appendChild(node("p", "pop-sha", hashes));
       }
     } else {
-      pop.appendChild(node("p", "pop-title", item.goal.period || ""));
+      pop.appendChild(node("p", "pop-title", (item.goal.period || "") + whose(item.goal)));
       pop.appendChild(node("p", "pop-when", figures(item.goal.stats)));
     }
 
@@ -847,7 +918,7 @@
 
   function readDay(panel, day) {
     var head = node("header", "reader-head");
-    head.appendChild(node("h2", null, day.goal.period || "a day's work"));
+    head.appendChild(node("h2", null, (day.goal.period || "a day's work") + whose(day.goal)));
     head.appendChild(node("p", "reader-figures", figures(day.goal.stats)));
     panel.appendChild(head);
 
@@ -1389,6 +1460,7 @@
   function chrome() {
     document.getElementById("name").textContent = graph.project.name;
     where(graph.project);
+    key();
 
     var t = graph.totals;
 
@@ -1457,6 +1529,23 @@
       more.setAttribute("aria-expanded", open ? "true" : "false");
       document.getElementById("foot-rest").hidden = !open;
     }
+  }
+
+  // key puts each agent's shape beside its name at the top of the page, where
+  // there are two agents to tell apart. With one, the name alone says whose
+  // history it is and a shape beside it would be a key to nothing.
+  function key() {
+    if (agents.length < 2) return;
+    document.querySelectorAll("#agents [data-agent]").forEach(function (entry) {
+      var shape = shapeOf({ agent: entry.getAttribute("data-agent") });
+      var svg = el("svg", { viewBox: "0 0 12 12", class: "key-mark", "aria-hidden": "true" });
+      var side = 8 * shape.side;
+      svg.appendChild(el("rect", {
+        x: 6 - side / 2, y: 6 - side / 2, width: side, height: side, rx: 1,
+        transform: "rotate(" + shape.turn + " 6 6)"
+      }));
+      entry.insertBefore(svg, entry.firstChild);
+    });
   }
 
   // fill writes one row of figures.

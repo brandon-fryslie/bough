@@ -209,3 +209,53 @@ func TestNewShapeRefusesHistoriesThatCannotExist(t *testing.T) {
 		}
 	}
 }
+
+// Two agents on the same days: a sitting of each on every day, overlapping on
+// every other one, the whole history in the order its sittings started and
+// every sitting saying whose it is.
+func TestAlongsideIsTwoAgentsOnTheSameDays(t *testing.T) {
+	g := Alongside(mustShape(t, 4, 3, 2, 3))
+	if want := []string{firstAgent, secondAgent}; len(g.Project.Agents) != 2 ||
+		g.Project.Agents[0] != want[0] || g.Project.Agents[1] != want[1] {
+		t.Errorf("agents = %q, want %q", g.Project.Agents, want)
+	}
+	if len(g.Goals) != 8 {
+		t.Fatalf("%d sittings, want 8", len(g.Goals))
+	}
+	for i := 0; i < len(g.Goals); i += 2 {
+		a, b := g.Goals[i], g.Goals[i+1]
+		if a.Agent != firstAgent || b.Agent != secondAgent {
+			t.Errorf("day %d holds sittings of %q and %q", i/2, a.Agent, b.Agent)
+		}
+		if !a.Stats.Start.Before(b.Stats.Start) {
+			t.Errorf("day %d: the second agent's sitting starts first", i/2)
+		}
+		if overlap := b.Stats.Start.Before(a.Stats.End); overlap != (i/2%2 == 0) {
+			t.Errorf("day %d: overlap is %v", i/2, overlap)
+		}
+	}
+	for _, link := range g.Links {
+		if number(link.From)%2 != 1 || number(link.To)%2 != 1 {
+			t.Errorf("link %s to %s does not join the first agent's sittings", link.From, link.To)
+		}
+	}
+	promptsInOrder(t, g)
+}
+
+// Every sitting and commit of the doubled history is its own.
+func TestAlongsideNamesEverythingOnce(t *testing.T) {
+	g := Alongside(mustShape(t, 3, 8, 2, 0))
+	ids, shas := map[string]bool{}, map[string]bool{}
+	for _, goal := range g.Goals {
+		ids[goal.ID] = true
+		for _, c := range goal.Stats.Commits {
+			shas[c.SHA] = true
+		}
+	}
+	if len(ids) != len(g.Goals) {
+		t.Errorf("%d sittings share %d ids", len(g.Goals), len(ids))
+	}
+	if len(shas) != len(g.Totals.Commits) {
+		t.Errorf("%d commits share %d hashes", len(g.Totals.Commits), len(shas))
+	}
+}

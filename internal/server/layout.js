@@ -9,6 +9,10 @@
 // tasks above and below it, and each task carries a circle for every prompt.
 // Straight lines join a node to its parent and to nothing else.
 //
+// Two agents' work shares the one spine. Each agent then has a side of it, and
+// sittings of the two that ran at the same time start in the same column, one
+// above the spine and one below, so the overlap is where the eye already is.
+//
 // Every number comes from the data or from a constant below, and nothing is
 // random, so the same history always draws the same way and a screenshot of it
 // is stable.
@@ -30,6 +34,12 @@
   var PROMPT_R = 6;
 
   var MARGIN = 120;
+
+  // How far a sitting's square sits off the spine when its agent has a side of
+  // the spine to itself, as a share of the square: past half of it, so the two
+  // squares of sittings drawn together never touch, with room to spare for a
+  // mark drawn a little larger than the square.
+  var LEAN = 0.65;
   var SPINE_Y = 0; // filled in once the tallest column is known
 
   // A task at or above this counts as hard. The score behind it is a guess, so
@@ -110,6 +120,60 @@
     return (new Date(b) - new Date(a)) / 86400000;
   }
 
+  // sides are the sides of the spine a sitting's tasks hang on, above first.
+  //
+  // One agent's history uses both, as it always has. With two, each agent has
+  // one, so sittings of the two that happened together can share a column
+  // without their work landing on top of each other. Only two agents are read,
+  // so two sides are enough to give each its own.
+  function sides(agents, agent) {
+    if (agents.length < 2) return [-1, 1];
+    return [agents.indexOf(agent) % 2 === 0 ? -1 : 1];
+  }
+
+  // overlaps lists, for each sitting, the sittings of another agent that were
+  // under way at the same time as it, earliest first. Goals arrive in the
+  // order they started, so the search along from each stops at the first that
+  // started after it ended.
+  //
+  // Only another agent's. One agent working in two worktrees at once is how
+  // that agent's history has always been drawn, and this answers a different
+  // question: what the other agent was doing meanwhile.
+  function overlaps(goals) {
+    var found = goals.map(function () { return []; });
+    for (var i = 0; i < goals.length; i++) {
+      var end = new Date(goals[i].stats.end);
+      for (var j = i + 1; j < goals.length && new Date(goals[j].stats.start) <= end; j++) {
+        if (goals[j].agent === goals[i].agent) continue;
+        found[i].push(j);
+        found[j].push(i);
+      }
+    }
+    found.forEach(function (list) { list.sort(function (a, b) { return a - b; }); });
+    return found;
+  }
+
+  // columns numbers the column each sitting is drawn in. A new column starts
+  // wherever no two overlapping sittings would sit either side of the break,
+  // so every pair that overlapped shares one. With one agent nothing overlaps
+  // in this sense, and every sitting has a column of its own, as it always did.
+  function columns(goals, pairs) {
+    // The earliest sitting at or after each one that reaches back before it.
+    var reach = new Array(goals.length);
+    var earliest = Infinity;
+    for (var j = goals.length - 1; j >= 0; j--) {
+      earliest = Math.min(earliest, j, pairs[j].length ? pairs[j][0] : j);
+      reach[j] = earliest;
+    }
+    var out = new Array(goals.length);
+    var n = -1;
+    for (var i = 0; i < goals.length; i++) {
+      if (reach[i] >= i) n++;
+      out[i] = n;
+    }
+    return out;
+  }
+
   // build returns everything needed to draw one diagram.
   function build(graph, mode) {
     var form = FORM[mode] || FORM.overview;
@@ -127,43 +191,74 @@
       });
     });
 
+    var agents = (graph.project && graph.project.agents) || [];
+    var pairs = overlaps(goals);
+    var column = columns(goals, pairs);
+
+    // A pure time axis collides, because two sittings on the same day land on
+    // top of each other. Time decides the pause, content decides the room,
+    // and the column always gets at least what it needs.
+    function pause(from, to) {
+      var apart = Math.max(0, days(from, to));
+      return form.dayGap * (0.55 + 0.45 * Math.sqrt(clamp(apart / 3, 0, 1)));
+    }
+
     // Lay each day out around a spine at y = 0 first, then shift the whole
     // thing down once we know how far the tallest column reached upward.
     var laid = [];
-    var x = MARGIN;
+    var frontier = MARGIN;
+    var start = MARGIN;
+    var lanes = {};
     var previousEnd = null;
     var above = 0;
     var below = 0;
 
-    goals.forEach(function (goal) {
-      // A pure time axis collides, because two sittings on the same day land
-      // on top of each other. Time decides the pause, content decides the
-      // room, and the column always gets at least what it needs.
-      if (previousEnd) {
-        var apart = Math.max(0, days(previousEnd, goal.stats.start));
-        x += form.dayGap * (0.55 + 0.45 * Math.sqrt(clamp(apart / 3, 0, 1)));
+    goals.forEach(function (goal, n) {
+      var hang = sides(agents, goal.agent);
+      var lane = hang.join(",");
+
+      // A new column starts clear of everything drawn so far. Within one, each
+      // side of the spine runs on from its own last sitting, and a sitting
+      // that overlapped one already drawn starts no earlier than that one did,
+      // which puts the two in line.
+      if (column[n] !== column[n - 1]) {
+        if (previousEnd) frontier += pause(previousEnd, goal.stats.start);
+        start = frontier;
+        lanes = {};
       }
+      var x = lanes[lane] ? lanes[lane].end + pause(lanes[lane].last, goal.stats.start) : start;
+      var earlier = pairs[n].filter(function (k) { return k < n; });
+      if (earlier.length) x = Math.max(x, laid[earlier[0]].x);
+
+      var square = size(goal.stats.edits || 0, mostDayEdits, DAY);
+      // Off the spine towards its tasks when they hang on one side only, and
+      // on it when they hang on both.
+      var lean = hang.reduce(function (a, b) { return a + b; }, 0) / hang.length;
 
       var day = {
         id: goal.id,
         goal: goal,
         kind: "day",
         x: Math.round(x),
-        y: SPINE_Y,
-        size: size(goal.stats.edits || 0, mostDayEdits, DAY),
+        y: SPINE_Y + lean * Math.round(square * LEAN + 2),
+        size: square,
+        lean: lean,
+        lane: lane,
+        column: column[n],
+        overlaps: pairs[n].map(function (k) { return goals[k].id; }),
         tasks: []
       };
 
-      // Tasks alternate above and below the spine, so a busy day grows in both
-      // directions rather than into a tall stack on one side.
-      var up = 0;
-      var down = 0;
+      // Tasks take the sides in turn, so a busy day grows in both directions
+      // rather than into a tall stack on one side.
+      var ranks = {};
       var reach = 0;
 
       goal.tasks.forEach(function (task, i) {
-        var upward = i % 2 === 0;
-        var rank = upward ? up++ : down++;
-        var side = upward ? -1 : 1;
+        var side = hang[i % hang.length];
+        var upward = side < 0;
+        var rank = ranks[side] || 0;
+        ranks[side] = rank + 1;
         var box = size(task.stats.edits || 0, mostTaskEdits, TASK);
 
         // A busy day spreads sideways once it has stacked a couple of rows.
@@ -221,7 +316,8 @@
 
       day.reach = reach;
       laid.push(day);
-      x += reach;
+      lanes[lane] = { end: x + reach, last: goal.stats.end };
+      frontier = Math.max(frontier, x + reach);
       previousEnd = goal.stats.end;
     });
 
@@ -236,14 +332,17 @@
       });
     });
 
-    var last = laid[laid.length - 1];
+    // The drawing ends where its furthest day's work does, which with two
+    // agents need not be the day drawn last.
+    var right = Math.max.apply(null, laid.map(function (day) { return day.x + day.reach; }));
     return {
-      width: last.x + last.reach + MARGIN,
+      width: right + MARGIN,
       height: shift + below + MARGIN,
       spineY: shift,
-      spine: { x1: MARGIN / 2, x2: last.x + last.reach + MARGIN / 2, y: shift },
+      spine: { x1: MARGIN / 2, x2: right + MARGIN / 2, y: shift },
       days: laid,
       links: links(graph, laid, shift, above),
+      agents: agents,
       hard: HARD
     };
   }

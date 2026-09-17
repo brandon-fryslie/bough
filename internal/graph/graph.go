@@ -20,7 +20,12 @@ import "time"
 // turn carries its task name in "task" with "text" left empty. Claude put the
 // sort of sub-agent in "kind" and Codex the name of the task, and "text" held
 // a task name nobody typed.
-const SchemaVersion = 2
+//
+// 3: "project.agent" became "project.agents", every agent whose history the
+// graph holds, and each goal names its own in "agent". A project is its
+// family, whichever agents worked in it, so one graph can hold two agents'
+// sittings and a single agent on the project no longer says which wrote each.
+const SchemaVersion = 3
 
 // Graph is one project's history.
 type Graph struct {
@@ -60,8 +65,10 @@ type Project struct {
 	// and ones since deleted. A project worked in one place has one.
 	Directories []string `json:"directories"`
 
-	// Agent names where the history came from, for example "claude-code".
-	Agent string `json:"agent"`
+	// Agents are the IDs of the agents whose history this holds, for example
+	// "claude-code", each once and in the order IDs sort. Every goal's agent
+	// is one of them.
+	Agents []string `json:"agents"`
 
 	// Sessions is how many separate sittings-with-the-agent this covers. It is
 	// reported because it is a fact about the record, not because it maps to
@@ -93,6 +100,11 @@ type Goal struct {
 	// Title is the name the agent gave the session this came from, when it
 	// had one.
 	Title string `json:"title,omitempty"`
+
+	// Agent is the ID of the agent whose session this sitting came from. A
+	// sitting is one agent's: two agents working at the same time are two
+	// sittings that overlap, never one.
+	Agent string `json:"agent"`
 
 	Stats Stats  `json:"stats"`
 	Tasks []Task `json:"tasks"`

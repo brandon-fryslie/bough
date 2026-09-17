@@ -152,7 +152,11 @@ said much.
 ## Agents
 
 Claude Code and OpenAI Codex CLI. Both are found automatically, and a project
-worked on with either shows up in the same list.
+worked on with either shows up in the same list. A project worked on with both
+is one project: one row naming each agent with its own count, and one page
+with both agents' sittings on the same line through time. Codex's days and
+tasks are drawn as diamonds beside Claude Code's squares, and sittings of the
+two that ran at the same time start in line, one above the line and one below.
 
 ```
 bough --agent=claude      only Claude Code

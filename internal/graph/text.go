@@ -16,11 +16,26 @@ import (
 // their own history here should be able to say whether the shape matches what
 // they remember, which is the only test that really matters and the one no
 // amount of unit testing replaces.
-func WriteText(w io.Writer, g Graph, verbose bool) error {
+//
+// named spells an agent's ID for a person. It is passed in because the names
+// belong to the agents, which this package may not see.
+func WriteText(w io.Writer, g Graph, verbose bool, named func(agentID string) string) error {
 	p := g.Project
 	fmt.Fprintf(w, "%s\n%s\n", p.Name, strings.Repeat("=", len(p.Name)))
 	if p.Path != "" {
 		fmt.Fprintf(w, "%s\n", p.Path)
+	}
+	// Every agent is named once, here. Each sitting below is marked with its
+	// own only when there are several, since on a project one agent worked on
+	// the mark would say the same thing on every one of them.
+	names := make([]string, len(p.Agents))
+	for i, id := range p.Agents {
+		names[i] = named(id)
+	}
+	fmt.Fprintf(w, "from %s\n", strings.Join(names, " and "))
+	mark := func(Goal) string { return "" }
+	if len(names) > 1 {
+		mark = func(goal Goal) string { return "[" + named(goal.Agent) + "] " }
 	}
 	// Said when the history came from more than the one directory, since the
 	// sittings below are then not all the path's own. Every prompt is listed
@@ -75,7 +90,7 @@ func WriteText(w io.Writer, g Graph, verbose bool) error {
 
 	for _, goal := range g.Goals {
 		fmt.Fprintf(w, "\n%s\n", strings.Repeat("-", 72))
-		fmt.Fprintf(w, "%-14s %s\n", goal.Period, goal.Label)
+		fmt.Fprintf(w, "%-14s %s%s\n", goal.Period, mark(goal), goal.Label)
 
 		s := goal.Stats
 		fmt.Fprintf(w, "%-14s %s, %s, %s\n", "",

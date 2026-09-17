@@ -38,7 +38,8 @@ func TestLayoutHoldsUp(t *testing.T) {
 }
 
 // writeGraphs produces the shapes worth checking: a busy project, a quiet one,
-// one with a single sitting, and one with no links at all.
+// one with a single sitting, one with no links at all, and two agents working
+// the same days.
 func writeGraphs(t *testing.T, dir string) []string {
 	t.Helper()
 	var paths []string
@@ -58,6 +59,11 @@ func writeGraphs(t *testing.T, dir string) []string {
 		// it: the next smallest is bounded by its height at 1.94 against a
 		// ceiling of 2, so a change to that ceiling went unnoticed.
 		"tiny": shaped(t, 1, 1),
+		// Two agents on the same days: on every other day a sitting of each
+		// ran at the same time, and on the rest one followed the other.
+		"together": alongside(t, 6, 3),
+		// And busy enough that each side of the spine spreads sideways.
+		"together-busy": alongside(t, 4, 9),
 	}
 	for name, g := range cases {
 		body, err := json.Marshal(g)
@@ -82,4 +88,14 @@ func shaped(t *testing.T, sittings, tasks int) graph.Graph {
 		t.Fatal(err)
 	}
 	return synthetic.History(s)
+}
+
+// alongside is shaped's history with a second agent's sitting beside each one.
+func alongside(t *testing.T, sittings, tasks int) graph.Graph {
+	t.Helper()
+	s, err := synthetic.NewShape(sittings, tasks, tasks, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return synthetic.Alongside(s)
 }

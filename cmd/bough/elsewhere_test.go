@@ -55,7 +55,7 @@ func siblings(t *testing.T) (app, site string) {
 // directory, and the graph's rule about that is tested on its own.
 func answered(t *testing.T, families *family.Resolver, app string, turn agent.Turn, noRepo bool) graph.Goal {
 	t.Helper()
-	p := family.Project{Path: app, Agent: "claude-code", Members: []agent.Project{{Path: app, Source: "claude-code"}}}
+	p := family.Project{Path: app, Members: []agent.Project{{Path: app, Source: "claude-code"}}}
 	sessions := []agent.Session{{ID: "s", Dir: app, Turns: []agent.Turn{turn}}}
 	opt := graph.DefaultOptions(everyAgentsRecord())
 	opt.Elsewhere = elsewhere(families, &repo.Disk{}, p, graph.Visited(p, sessions), nil, noRepo)

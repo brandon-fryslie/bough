@@ -179,7 +179,7 @@ func TestRootIsReadForEveryAgent(t *testing.T) {
 	if err := run([]string{"--list", "--root", root}, &out, &errs); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"claude-project", "[Claude Code]", "codex-project", "[Codex]"} {
+	for _, want := range []string{"claude-project", "Claude Code", "codex-project", "Codex"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("listing is missing %q:\n%s", want, out.String())
 		}
@@ -224,22 +224,21 @@ func TestCurrentProjectComesFirstAndIsMarked(t *testing.T) {
 	const cwd = "/somewhere/here"
 	projects := []family.Project{
 		alone("alpha", "/somewhere/alpha", "claude-code"),
-		alone("here", cwd, "claude-code"),
 		alone("beta", "/somewhere/beta", "claude-code"),
 		alone("here", cwd, "codex"),
+		alone("gamma", "/somewhere/gamma", "claude-code"),
 	}
 
 	ordered, here := currentFirst(projects, family.Family{Name: cwd})
-	// One for each agent that worked there.
-	if here != 2 {
-		t.Fatalf("%d projects are here, want 2", here)
+	if here != 1 {
+		t.Fatalf("%d projects are here, want 1", here)
 	}
-	if ordered[0].Name() != "here" || ordered[1].Name() != "here" {
-		t.Errorf("first are %q and %q, want the project we are standing in", ordered[0].Name(), ordered[1].Name())
+	if ordered[0].Name() != "here" {
+		t.Errorf("first is %q, want the project we are standing in", ordered[0].Name())
 	}
 	// The rest keep their order, so the list does not reshuffle around the move.
-	if ordered[2].Name() != "alpha" || ordered[3].Name() != "beta" {
-		t.Errorf("the other projects were reordered: %q, %q", ordered[2].Name(), ordered[3].Name())
+	if ordered[1].Name() != "alpha" || ordered[2].Name() != "beta" || ordered[3].Name() != "gamma" {
+		t.Errorf("the other projects were reordered: %q, %q, %q", ordered[1].Name(), ordered[2].Name(), ordered[3].Name())
 	}
 	if len(ordered) != len(projects) {
 		t.Errorf("got %d projects, want %d", len(ordered), len(projects))
@@ -263,7 +262,7 @@ func TestNoMarkerWhenNotInsideAProject(t *testing.T) {
 
 // alone is a project worked in only the directory it is known by.
 func alone(name, path, agentID string) family.Project {
-	return family.Project{Path: path, Agent: agentID, Members: []agent.Project{{Name: name, Path: path, Source: agentID}}}
+	return family.Project{Path: path, Members: []agent.Project{{Name: name, Path: path, Source: agentID}}}
 }
 
 // Naming a project still goes straight there. The list is for when nothing was

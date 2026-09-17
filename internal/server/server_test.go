@@ -13,13 +13,20 @@ import (
 	"github.com/nickelsec/bough/internal/graph"
 )
 
+// spelled names the agents the way the command does, from a table of the
+// test's own.
+func spelled(id string) string {
+	return map[string]string{"claude-code": "Claude Code", "codex": "Codex"}[id]
+}
+
 func sample() graph.Graph {
 	start := time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)
 	return graph.Graph{
 		Schema:  graph.SchemaVersion,
-		Project: graph.Project{Name: "example", Path: "/work/example", Agent: "claude-code"},
+		Project: graph.Project{Name: "example", Path: "/work/example", Agents: []string{"claude-code"}},
 		Goals: []graph.Goal{{
 			ID:     "g1",
+			Agent:  "claude-code",
 			Label:  "rework the export path",
 			Period: "Sat 1 Aug",
 			Stats:  graph.Stats{Start: start, End: start.Add(time.Hour), Turns: 2},
@@ -44,7 +51,7 @@ func start(t *testing.T, g graph.Graph) string {
 	t.Cleanup(cancel)
 
 	urls := make(chan string, 1)
-	go Serve(ctx, g, "Claude Code", func(u string) { urls <- u })
+	go Serve(ctx, g, spelled, func(u string) { urls <- u })
 
 	select {
 	case url := <-urls:
@@ -196,7 +203,7 @@ func TestUnknownPathIsNotFound(t *testing.T) {
 func TestEmptyGraphStillRenders(t *testing.T) {
 	url := start(t, graph.Graph{
 		Schema:  graph.SchemaVersion,
-		Project: graph.Project{Name: "empty", Agent: "claude-code"},
+		Project: graph.Project{Name: "empty", Agents: []string{"claude-code"}},
 	})
 	resp, body := get(t, url+"/")
 
@@ -214,7 +221,7 @@ func TestShutdownIsClean(t *testing.T) {
 	urls := make(chan string, 1)
 	done := make(chan error, 1)
 
-	go func() { done <- Serve(ctx, sample(), "Claude Code", func(u string) { urls <- u }) }()
+	go func() { done <- Serve(ctx, sample(), spelled, func(u string) { urls <- u }) }()
 	<-urls
 	cancel()
 

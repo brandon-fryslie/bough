@@ -83,7 +83,9 @@ func DefaultOptions(made []agent.MadeFor) Options {
 //
 // Goals from every session are gathered and ordered by when they happened, so
 // a project worked on across several sessions reads as one run of work rather
-// than as separate piles. Sessions are an artefact of how the agent stores
+// than as separate piles. That holds across agents too: a family two agents
+// worked in is one run of both agents' sittings, each sitting its own
+// agent's. Sessions are an artefact of how the agent stores
 // things and mean little to the person who did the work. So are the
 // directories they ran in: the sessions are those of every member of the
 // project's family, and a worktree's sittings sit among the checkout's.
@@ -107,6 +109,7 @@ func Build(p family.Project, sessions []agent.Session, opt Options) Graph {
 		goal      rollup.Goal
 		start     time.Time
 		title     string
+		agent     string
 		elsewhere []Visit
 	}
 	sittings := make([]sitting, 0, len(sessions))
@@ -117,7 +120,7 @@ func Build(p family.Project, sessions []agent.Session, opt Options) Graph {
 			for j := range g.Tasks {
 				g.Tasks[j].Turns = ours(g.Tasks[j].Turns)
 			}
-			sittings = append(sittings, sitting{goal: g, start: first(g.Turns()), title: sess.Title, elsewhere: away})
+			sittings = append(sittings, sitting{goal: g, start: first(g.Turns()), title: sess.Title, agent: sess.Source, elsewhere: away})
 		}
 	}
 	// By when each started. Stable, so goals starting at the same moment stay
@@ -135,8 +138,8 @@ func Build(p family.Project, sessions []agent.Session, opt Options) Graph {
 		Project: Project{
 			Name:        p.Name(),
 			Path:        p.Path,
-			Directories: directories(p),
-			Agent:       p.Agent,
+			Directories: p.Directories(),
+			Agents:      agents(sessions),
 			Sessions:    len(sessions),
 			RepoRead:    repoRead,
 		},
@@ -151,6 +154,7 @@ func Build(p family.Project, sessions []agent.Session, opt Options) Graph {
 			ID:        fmt.Sprintf("g%d", i+1),
 			Label:     rollup.Label(turns),
 			Title:     sittings[i].title,
+			Agent:     sittings[i].agent,
 			Period:    rollup.Period(first(turns), last(turns)),
 			Stats:     statsOf(turns, opt.Ambience),
 			Elsewhere: sittings[i].elsewhere,
@@ -324,14 +328,18 @@ func fromRepo(h repo.History, made []*agent.Commit) bool {
 	return true
 }
 
-// directories are the member directories the project's sessions were read
-// from.
-func directories(p family.Project) []string {
-	dirs := make([]string, len(p.Members))
-	for i, m := range p.Members {
-		dirs[i] = m.Path
+// agents are the agents whose sessions these are, each once and in the order
+// IDs sort, which is the order family.Project.Agents gives.
+//
+// [LAW:one-source-of-truth] Read from the sessions every goal is built from,
+// so no goal can name an agent the project does not list.
+func agents(sessions []agent.Session) []string {
+	ids := make([]string, len(sessions))
+	for i, s := range sessions {
+		ids[i] = s.Source
 	}
-	return dirs
+	slices.Sort(ids)
+	return slices.Compact(ids)
 }
 
 // prepared is the sessions as every stage below reads them: copied, each

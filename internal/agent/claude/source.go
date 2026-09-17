@@ -133,10 +133,11 @@ func (s Source) sessions(p agent.Project) ([]agent.Session, error) {
 			continue
 		}
 		sessions = append(sessions, agent.Session{
-			ID:    sessionID(recs, fp),
-			Title: sessionTitle(recs),
-			Turns: turns,
-			Dir:   p.Path,
+			ID:     sessionID(recs, fp),
+			Title:  sessionTitle(recs),
+			Turns:  turns,
+			Dir:    p.Path,
+			Source: Agent().ID,
 		})
 	}
 	return sessions, errors.Join(problems...)

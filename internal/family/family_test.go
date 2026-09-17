@@ -408,52 +408,97 @@ func TestKeyIsTheSameAcrossAFamily(t *testing.T) {
 	}
 }
 
-// Directories with history gather into one project per family and agent, and
-// only the way Resolve joins them: containment and a shared name join nothing.
+// Directories with history gather into one project per family, whichever
+// agents worked in them, and only the way Resolve joins them: containment and
+// a shared name join nothing.
 func TestProjectsGatherAFamilysDirectories(t *testing.T) {
 	fixtures := append(slices.Clone(history), fixture{path: "/Users/bmf/code/textual-js", history: true})
 	projects := projectsOf(fixtures)
-	// The last one is Codex's history of textual-js, which is a project of its own.
+	// The last one is Codex's history of textual-js, in a directory Claude
+	// Code worked in too.
 	projects[len(projects)-1].Source = "codex"
 	for i := range projects[:len(projects)-1] {
 		projects[i].Source = "claude-code"
 	}
 
 	got := map[string][]string{}
+	agents := map[string][]string{}
 	for _, p := range New(projects, recordsOf(fixtures), disk{t: t, dirs: exists, repos: repos}).Projects() {
 		for _, m := range p.Members {
 			got[p.Key()] = append(got[p.Key()], m.Path)
 		}
+		agents[p.Key()] = p.Agents()
 	}
 
 	for key, want := range map[string][]string{
-		"/users/bmf/code/textual-js claude-code": {
+		// Both agents' history of the one directory is one project's, the
+		// directory listed once for each.
+		"/users/bmf/code/textual-js": {
+			"/Users/bmf/code/textual-js",
 			"/Users/bmf/code/textual-js",
 			"/Users/bmf/code/textual-js/visual-tests",
 			"/private/tmp/claude-501/-Users-bmf-code-textual-js/1d56911b-b2f0-46e1-96a3-e1622bc1875c/scratchpad",
 			"/private/tmp/claude-501/-Users-bmf-code-textual-js/1d56911b-b2f0-46e1-96a3-e1622bc1875c/scratchpad/probe",
 		},
-		// One agent's history is its own project, whatever another agent did in
-		// the same family.
-		"/users/bmf/code/textual-js codex": {"/Users/bmf/code/textual-js"},
-		"/users/bmf/code/happy claude-code": {
+		"/users/bmf/code/happy": {
 			"/Users/bmf/code/happy",
 			"/Users/bmf/code/happy/.claude/worktrees/calm-sparking-floyd",
 			"/private/tmp/claude-501/-Users-bmf-code-happy--claude-worktrees-calm-sparking-floyd/859818fc-1f79-47fa-9a8b-12b41eeb2b0e/scratchpad",
 		},
 		// A worktree whose main tree has no history is named after the main tree.
-		"/users/bmf/code/low-talker claude-code": {"/Users/bmf/wt/low-talker-fix"},
+		"/users/bmf/code/low-talker": {"/Users/bmf/wt/low-talker-fix"},
 		// Containment alone joins nothing.
-		"/users/bmf claude-code":      {"/Users/bmf"},
-		"/users/bmf/code claude-code": {"/Users/bmf/code"},
+		"/users/bmf":      {"/Users/bmf"},
+		"/users/bmf/code": {"/Users/bmf/code"},
 		// A shared name joins nothing.
-		"/users/bmf/code/brandon-fryslie_happy claude-code": {"/Users/bmf/code/brandon-fryslie_happy"},
-		"/users/bmf/code/docs claude-code":                  {"/Users/bmf/code/docs"},
-		"/users/bmf/writing/docs claude-code":               {"/Users/bmf/writing/docs"},
+		"/users/bmf/code/brandon-fryslie_happy": {"/Users/bmf/code/brandon-fryslie_happy"},
+		"/users/bmf/code/docs":                  {"/Users/bmf/code/docs"},
+		"/users/bmf/writing/docs":               {"/Users/bmf/writing/docs"},
 	} {
 		if !slices.Equal(got[key], want) {
 			t.Errorf("project %s has members\n got %q\nwant %q", key, got[key], want)
 		}
+	}
+	if want := []string{"claude-code", "codex"}; !slices.Equal(agents["/users/bmf/code/textual-js"], want) {
+		t.Errorf("textual-js has agents %q, want %q", agents["/users/bmf/code/textual-js"], want)
+	}
+	if want := []string{"claude-code"}; !slices.Equal(agents["/users/bmf/code/happy"], want) {
+		t.Errorf("happy has agents %q, want %q", agents["/users/bmf/code/happy"], want)
+	}
+}
+
+// A family's identity is its directories alone. Two agents' history of one
+// directory is one project with one key, and that key names no agent.
+func TestAFamilysKeyNamesNoAgent(t *testing.T) {
+	projects := []agent.Project{
+		{Path: "/work/app", Source: "codex"},
+		{Path: "/work/app", Source: "claude-code"},
+		{Path: "/work/app/web", Source: "codex"},
+	}
+	disk := disk{t: t, dirs: []string{"/work/app", "/work/app/web"}, repos: map[string]string{"/work/app": "/work/app"}}
+	got := New(projects, nil, disk).Projects()
+	if len(got) != 1 {
+		t.Fatalf("%d projects, want the one family", len(got))
+	}
+	p := got[0]
+	if p.Key() != "/work/app" {
+		t.Errorf("key = %q, want the family's path and nothing else", p.Key())
+	}
+	if !p.Is(Family{Name: "/work/app"}) {
+		t.Error("the project is not its family's")
+	}
+	if want := []string{"claude-code", "codex"}; !slices.Equal(p.Agents(), want) {
+		t.Errorf("agents = %q, want %q", p.Agents(), want)
+	}
+	if want := []string{"/work/app", "/work/app/web"}; !slices.Equal(p.Directories(), want) {
+		t.Errorf("directories = %q, want each once: %q", p.Directories(), want)
+	}
+	var codex []string
+	for _, m := range p.Of("codex") {
+		codex = append(codex, m.Path)
+	}
+	if want := []string{"/work/app", "/work/app/web"}; !slices.Equal(codex, want) {
+		t.Errorf("Codex's members = %q, want %q", codex, want)
 	}
 }
 

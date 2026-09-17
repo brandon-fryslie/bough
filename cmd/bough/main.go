@@ -171,7 +171,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	sessions, err := sources[target.Agent].Sessions(target.Members...)
+	sessions, err := read(sources, target)
 	if err != nil {
 		// Some transcripts may be unreadable while others are fine, so say so
 		// and carry on with what did load.
@@ -202,7 +202,20 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if useBrowser(*asText, *out, stdout) {
 		return browse(g, stderr)
 	}
-	return graph.WriteText(w, g, *verbose)
+	return graph.WriteText(w, g, *verbose, registry.Display)
+}
+
+// read is a project's history: each agent's members read by that agent's own
+// source, and every agent's sessions together, since a family is its
+// directories whichever agents worked in them.
+func read(sources map[string]agent.Source, p family.Project) ([]agent.Session, error) {
+	agents := p.Agents()
+	found := make([][]agent.Session, len(agents))
+	problems := make([]error, len(agents))
+	for i, id := range agents {
+		found[i], problems[i] = sources[id].Sessions(p.Of(id)...)
+	}
+	return slices.Concat(found...), errors.Join(problems...)
 }
 
 // everyAgentsRecord is every agent's reading of the directories it makes.
@@ -243,12 +256,7 @@ func options(made []agent.MadeFor, disk *repo.Disk, families *family.Resolver, p
 	opt.Tool = released()
 	opt.Elsewhere = elsewhere(families, disk, p, graph.Visited(p, sessions), temporary(), noRepo)
 	if !noRepo {
-		dirs := make([]string, 0, len(p.Members)+1)
-		dirs = append(dirs, p.Path)
-		for _, m := range p.Members {
-			dirs = append(dirs, m.Path)
-		}
-		opt.Repo = repo.ReadAll(disk.Checkouts(p.Path, dirs))
+		opt.Repo = repo.ReadAll(disk.Checkouts(p.Path, append([]string{p.Path}, p.Directories()...)))
 	}
 	return opt
 }
@@ -350,7 +358,7 @@ func browse(g graph.Graph, stderr io.Writer) error {
 
 	// The address is printed before the browser is asked for, so a terminal
 	// that cannot open one still tells the reader where to look.
-	err := server.Serve(ctx, g, registry.Display(g.Project.Agent), func(url string) {
+	err := server.Serve(ctx, g, registry.Display, func(url string) {
 		fmt.Fprintf(stderr, "bough is showing %s at %s\n", g.Project.Name, url)
 		fmt.Fprintf(stderr, "press ctrl-c when you are done\n")
 		openBrowser(url)
@@ -421,7 +429,7 @@ func choose(projects []family.Project, families *family.Resolver, arg string, in
 
 	// A path and a name answer the same way: one project opens, and several
 	// are named so the reader can say which. A place two agents worked in is
-	// two projects, and a path that quietly chose one hid the other.
+	// one project holding both, and --agent is how to read one of them.
 	// An argument written as a path is only ever a path: `bough .` somewhere
 	// with no history once opened a project whose name held a dot.
 	matches := byName(projects, arg)
@@ -438,7 +446,7 @@ func choose(projects []family.Project, families *family.Resolver, arg string, in
 		// then the only way to ask for one of them.
 		names := make([]string, len(matches))
 		for i, m := range matches {
-			names[i] = fmt.Sprintf("%s [%s] in %s", m.Name(), m.Agent, m.Path)
+			names[i] = fmt.Sprintf("%s in %s", m.Name(), m.Path)
 		}
 		return family.Project{}, fmt.Errorf("%q matches several projects: %s", arg, strings.Join(names, ", "))
 	}
@@ -471,9 +479,9 @@ func offer(projects []family.Project, cwd family.Family, in io.Reader, out io.Wr
 	return projects[i], nil
 }
 
-// currentFirst puts first the projects of the family the working directory
-// belongs to, one per agent that worked there, and reports how many there are.
-// The rest keep their order.
+// currentFirst puts first the project of the family the working directory
+// belongs to, and reports how many projects that put first: one, or none when
+// the directory's family has no history. The rest keep their order.
 //
 // The family is passed in rather than resolved here. The directory was an
 // ambient fact reached for three levels below run, which is the same reason
@@ -493,33 +501,49 @@ func currentFirst(projects []family.Project, cwd family.Family) ([]family.Projec
 
 // describe is the dimmer text beside a project name, enough to tell which one
 // is wanted without reading any of the history.
+//
+// Every agent that worked on it is named with how much of its history there
+// is, spelled the way the listing and the page spell it. Naming only the
+// unfamiliar one made the others look like the absence of an agent rather
+// than a choice of one. The share is the size on disk rather than a count of
+// prompts, since counting them means reading all of it.
 func describe(p family.Project) string {
-	var bytes int64
+	ids := p.Agents()
+	shares := make([]string, len(ids))
+	for i, id := range ids {
+		var bytes int64
+		for _, m := range p.Of(id) {
+			bytes += m.Bytes
+		}
+		shares[i] = strings.TrimSpace(registry.Display(id) + " " + size(bytes))
+	}
+	parts := []string{strings.Join(shares, " and ")}
+
 	var last time.Time
 	for _, m := range p.Members {
-		bytes += m.Bytes
 		if m.LastWorked.After(last) {
 			last = m.LastWorked
 		}
 	}
-
-	// Named for every agent, and spelled the way the listing and the page spell
-	// it. Naming only the unfamiliar one made the others look like the absence
-	// of an agent rather than a choice of one.
-	var parts []string
-	switch {
-	case bytes >= 1<<20:
-		parts = append(parts, fmt.Sprintf("%d MB", bytes>>20))
-	case bytes > 0:
-		parts = append(parts, fmt.Sprintf("%d KB", bytes>>10))
-	}
-	if n := len(p.Members); n > 1 {
+	if n := len(p.Directories()); n > 1 {
 		parts = append(parts, fmt.Sprintf("%d directories", n))
 	}
 	if !last.IsZero() {
 		parts = append(parts, ago(last))
 	}
-	return strings.TrimSpace("[" + registry.Display(p.Agent) + "] " + strings.Join(parts, ", "))
+	return strings.Join(parts, ", ")
+}
+
+// size says roughly how much history a number of bytes is, or nothing for
+// none.
+func size(bytes int64) string {
+	switch {
+	case bytes >= 1<<20:
+		return fmt.Sprintf("%d MB", bytes>>20)
+	case bytes > 0:
+		return fmt.Sprintf("%d KB", bytes>>10)
+	}
+	return ""
 }
 
 // ago says how long ago something happened, the way a person would.
@@ -541,14 +565,12 @@ func ago(t time.Time) string {
 	}
 }
 
-// byName matches projects whose name, or name and agent, holds the argument.
+// byName matches projects whose name holds the argument.
 func byName(projects []family.Project, arg string) []family.Project {
 	var matches []family.Project
 	argLower := strings.ToLower(arg)
 	for _, p := range projects {
-		name := strings.ToLower(p.Name())
-		tagged := fmt.Sprintf("%s [%s]", name, strings.ToLower(p.Agent))
-		if strings.Contains(name, argLower) || strings.Contains(tagged, argLower) {
+		if strings.Contains(strings.ToLower(p.Name()), argLower) {
 			matches = append(matches, p)
 		}
 	}
@@ -606,45 +628,45 @@ var driveRooted = regexp.MustCompile(`^[A-Za-z]:(/|$)`)
 // out of line with every other row. Measuring first costs a pass over a list
 // that is already in memory.
 //
-// The agent gets a column of its own rather than being stuck onto the name. It
-// is the same width on every row so the eye can run down it, and it is filled
-// in for every agent: naming only the unfamiliar one implies the others are
-// somehow the default, which stopped being true when the second one arrived.
+// Every agent that worked on a project is named with its own count, on the
+// one row. Naming only the unfamiliar one implies the others are somehow the
+// default, which stopped being true when the second one arrived; and a
+// project both agents worked on is one project, so one row says how much of
+// it each did.
 func writeList(w io.Writer, sources map[string]agent.Source, projects []family.Project, everyDir bool) error {
 	type dir struct {
 		path  string
-		count tally
+		count count
 	}
 	type row struct {
 		name  string
-		agent string
 		path  string
-		count tally
+		count count
 		dirs  []dir
 	}
 
 	rows := make([]row, 0, len(projects))
-	var nameW, agentW, pathW int
+	var nameW, pathW int
 	for _, p := range projects {
-		src := sources[p.Agent]
 		// The project is read whole, so a session whose records are spread
 		// over several of its directories counts once.
-		r := row{name: p.Name(), agent: "[" + registry.Display(p.Agent) + "]", path: p.Path,
-			count: tallied(len(p.Members))(src.Sessions(p.Members...))}
+		r := row{name: p.Name(), path: p.Path, count: counted(sources, p)}
 
 		// Each directory on its own only when they are asked for, since that
 		// reads every one of them a second time.
-		shown := p.Members
+		shown := p.Directories()
 		if !everyDir {
 			shown = nil
 		}
-		for _, m := range shown {
-			r.dirs = append(r.dirs, dir{path: m.Path, count: tallied(1)(src.Sessions(m))})
+		for _, d := range shown {
+			at := family.Project{Path: d, Members: slices.DeleteFunc(slices.Clone(p.Members), func(m agent.Project) bool {
+				return agent.NormalisePath(m.Path) != agent.NormalisePath(d)
+			})}
+			r.dirs = append(r.dirs, dir{path: d, count: counted(sources, at)})
 		}
 
 		rows = append(rows, r)
 		nameW = wider(nameW, r.name)
-		agentW = wider(agentW, r.agent)
 		pathW = wider(pathW, r.path)
 	}
 
@@ -658,22 +680,59 @@ func writeList(w io.Writer, sources map[string]agent.Source, projects []family.P
 	}
 
 	for _, r := range rows {
-		fmt.Fprintf(w, "%-*s  %-*s  %-*s  %s\n",
-			nameW, r.name, agentW, r.agent, pathW, r.path, r.count.say())
+		fmt.Fprintf(w, "%-*s  %-*s  %s\n", nameW, r.name, pathW, r.path, r.count.say())
 
 		// Under the project's own path, so the directories read as parts of it.
 		for _, d := range r.dirs {
-			fmt.Fprintf(w, "%-*s  %-*s  %-*s  %s\n", nameW, "", agentW, "", pathW, d.path, d.count.say())
+			fmt.Fprintf(w, "%-*s  %-*s  %s\n", nameW, "", pathW, d.path, d.count.say())
 		}
 	}
 	return nil
 }
 
-// tally is how much history a directory, or a whole project, holds.
+// counted reads a project's history, agent by agent, into how much of it
+// each agent holds.
+func counted(sources map[string]agent.Source, p family.Project) count {
+	c := count{dirs: len(p.Directories())}
+	for _, id := range p.Agents() {
+		members := p.Of(id)
+		t := tallied(len(members))(sources[id].Sessions(members...))
+		t.agent = registry.Display(id)
+		c.agents = append(c.agents, t)
+	}
+	return c
+}
+
+// count is how much history a directory, or a whole project, holds: each
+// agent's share, and across how many directories.
+type count struct {
+	agents []tally
+	dirs   int
+}
+
+// say names each agent with its share, then how many directories they were
+// taken from when there were several.
+func (c count) say() string {
+	shares := make([]string, len(c.agents))
+	for i, t := range c.agents {
+		shares[i] = t.say()
+	}
+	where := ""
+	if c.dirs > 1 {
+		where = fmt.Sprintf(" in %d directories", c.dirs)
+	}
+	return strings.Join(shares, " and ") + where
+}
+
+// tally is how much of one agent's history a directory, or a whole project,
+// holds.
 type tally struct {
+	// agent is the agent's name, spelled for a person.
+	agent string
+
 	prompts int
 
-	// dirs is how many directories were read.
+	// dirs is how many of the agent's directories were read.
 	dirs int
 
 	// unread means some history could not be read, which is a different
@@ -694,8 +753,7 @@ func tallied(dirs int) func([]agent.Session, error) tally {
 	}
 }
 
-// say gives the count, across however many directories it was taken from, or
-// says there is none to give.
+// say gives the agent's count, or says there is none to give.
 //
 // A history that failed to read says so rather than reporting a number. The
 // count came from a discarded error, so a project whose transcripts could not
@@ -703,17 +761,13 @@ func tallied(dirs int) func([]agent.Session, error) tally {
 // which of the two it was. Only a single directory with nothing read is
 // unreadable outright: across several, one failure says nothing of the rest.
 func (t tally) say() string {
-	where := ""
-	if t.dirs > 1 {
-		where = fmt.Sprintf(" in %d directories", t.dirs)
-	}
 	switch {
 	case !t.unread:
-		return fmt.Sprintf("%d prompts%s", t.prompts, where)
+		return fmt.Sprintf("%s %d prompts", t.agent, t.prompts)
 	case t.dirs == 1 && t.prompts == 0:
-		return "could not be read"
+		return t.agent + " could not be read"
 	}
-	return fmt.Sprintf("%d prompts%s, some could not be read", t.prompts, where)
+	return fmt.Sprintf("%s %d prompts (some could not be read)", t.agent, t.prompts)
 }
 
 const usage = `bough shows the shape of the work in a project's AI coding history.

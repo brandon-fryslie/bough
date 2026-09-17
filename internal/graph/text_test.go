@@ -26,7 +26,7 @@ func TestTextShowsEachRecordedFactForWhatItIs(t *testing.T) {
 	g := Build(alone(agent.Project{Name: "site", Path: "/work/site"}), []agent.Session{{ID: "S", Turns: []agent.Turn{prompt}}, orphan}, opt)
 
 	var out strings.Builder
-	if err := WriteText(&out, g, true); err != nil {
+	if err := WriteText(&out, g, true, named); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
@@ -54,7 +54,7 @@ func TestTextSaysWhenTheRepositoryWasNotRead(t *testing.T) {
 		Totals:  Stats{Commits: []Commit{{SHA: "abc1234"}}},
 	}
 	var b bytes.Buffer
-	if err := WriteText(&b, g, false); err != nil {
+	if err := WriteText(&b, g, false, named); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(b.String(), "the repository was not read") {
@@ -63,7 +63,7 @@ func TestTextSaysWhenTheRepositoryWasNotRead(t *testing.T) {
 
 	g.Project.RepoRead = true
 	b.Reset()
-	if err := WriteText(&b, g, false); err != nil {
+	if err := WriteText(&b, g, false, named); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(b.String(), "the repository was not read") {
@@ -86,7 +86,7 @@ func TestTextSaysWhenAProjectSpansDirectories(t *testing.T) {
 	} {
 		var out strings.Builder
 		g := Graph{Project: Project{Name: "app", Path: "/work/app", Directories: c.dirs}}
-		if err := WriteText(&out, g, c.verbose); err != nil {
+		if err := WriteText(&out, g, c.verbose, named); err != nil {
 			t.Fatal(err)
 		}
 		for _, want := range c.want {

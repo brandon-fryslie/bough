@@ -13,7 +13,7 @@ import (
 
 // app is a repository with a worktree, worked in from its checkout. Its
 // sibling is another repository at /work/site.
-var app = family.Project{Path: "/work/app", Agent: "claude-code", Members: []agent.Project{
+var app = family.Project{Path: "/work/app", Members: []agent.Project{
 	{Path: "/work/app"}, {Path: "/work/app/.claude/worktrees/calm-river"},
 }}
 
