@@ -48,8 +48,8 @@
       function note() { recording.inputs.push(root.performance.now()); }
 
       // drawn is whether two frames have started at or after the latest input.
-      // Inputs are kept as they arrive, which need not be the order of their
-      // times.
+      // With no input at all every frame counts, so a driver whose input never
+      // arrived still gets its recording back, and hears why from the parse.
       function drawn() {
         var frames = recording.frames;
         var latest = recording.inputs.reduce(function (a, b) { return Math.max(a, b); }, -Infinity);

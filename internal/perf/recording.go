@@ -62,8 +62,11 @@ func ParseRecording(raw []byte) (Recording, error) {
 			return Recording{}, fmt.Errorf("frame %d at %v does not follow frame %d at %v", i, frames[i], i-1, frames[i-1])
 		}
 	}
-	// Only when input happened matters here, not the order it was noted in.
-	slices.Sort(inputs)
+	// [LAW:parse-dont-validate] the probe notes input on the page clock as it
+	// arrives, and that clock never goes back, so disorder is a broken probe.
+	if !slices.IsSorted(inputs) {
+		return Recording{}, errors.New("inputs are not in the order of their times, which the page clock cannot produce")
+	}
 
 	if len(inputs) == 0 {
 		return Recording{}, errors.New("no input reached the page, so there is nothing to judge")
