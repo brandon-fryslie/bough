@@ -73,8 +73,8 @@ const (
 // the day squares differ in size, which is the weighting the layout test's
 // canvases were measured against.
 func History(s Shape) graph.Graph {
-	return written(s, []string{firstAgent}, func(_ int, day time.Time) []time.Time {
-		return []time.Time{day}
+	return written(s, []string{firstAgent}, func(_ int, day time.Time, _ int) time.Time {
+		return day
 	})
 }
 
@@ -85,29 +85,31 @@ func History(s Shape) graph.Graph {
 // hour after the first ends, so they share the day and not the time. Links
 // join the first agent's sittings, as History's do.
 func Alongside(s Shape) graph.Graph {
-	return written(s, []string{firstAgent, secondAgent}, func(n int, day time.Time) []time.Time {
-		if n%2 == 0 {
-			return []time.Time{day, day.Add(time.Hour)}
-		}
-		return []time.Time{day, day.Add(sitting + time.Hour)}
+	late := [2]time.Duration{time.Hour, sitting + time.Hour}
+	return written(s, []string{firstAgent, secondAgent}, func(n int, day time.Time, a int) time.Time {
+		return day.Add(time.Duration(a) * late[n%2])
 	})
 }
 
 // written builds a history whose day n holds one sitting for each agent,
-// starting at the times starts gives, which are in order.
-func written(s Shape, agents []string, starts func(n int, day time.Time) []time.Time) graph.Graph {
+// agent a's starting at starts(n, day, a). A later agent starts no earlier, so
+// the goals come out in time order.
+func written(s Shape, agents []string, starts func(n int, day time.Time, a int) time.Time) graph.Graph {
 	first := time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)
 	g := graph.Graph{Schema: graph.SchemaVersion, Project: graph.Project{Name: "synthetic", Agents: agents}}
 
 	for n := 0; n < s.sittings; n++ {
 		day := first.AddDate(0, 0, n*2)
-		for a, at := range starts(n, day) {
+		// [LAW:one-source-of-truth] agents is the one list of who wrote each day;
+		// starts is asked per agent rather than handing back a parallel list.
+		for a, name := range agents {
+			at := starts(n, day, a)
 			m := len(g.Goals)
 			goal := graph.Goal{
 				ID:     goalID(m),
 				Label:  "a sitting",
 				Period: day.Format("Mon 2 Jan"),
-				Agent:  agents[a],
+				Agent:  name,
 				Stats:  graph.Stats{Start: at, End: at.Add(sitting), Edits: 12 * (n + 1)},
 			}
 			clock := prompter{start: at, total: s.promptsPerSitting()}
