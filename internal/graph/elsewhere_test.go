@@ -165,10 +165,11 @@ func TestTheAgentsOwnFilesAreNotRecorded(t *testing.T) {
 
 func TestASymlinkedPathIsRecordedWhereItLeads(t *testing.T) {
 	const link = "/home/me/.config/tool/config.toml"
-	goal, _ := away(t, places(map[string]Place{link: at("/home/me/dotfiles/config/tool/config.toml", "/home/me/dotfiles")}),
+	goal, _ := away(t, places(map[string]Place{link: at(`C:\Users\Me\Dotfiles\Config\tool\config.toml`, "C:/Users/Me/Dotfiles")}),
 		turn(1, 0, longRequest, link, link))
-	want := []Visit{{Family: "/home/me/dotfiles", Path: "/home/me/dotfiles", Files: []FileCount{
-		{Path: "/home/me/dotfiles/config/tool/config.toml", Edits: 2},
+	// Spelled as the disk led there, with one separator.
+	want := []Visit{{Family: "c:/users/me/dotfiles", Path: "C:/Users/Me/Dotfiles", Files: []FileCount{
+		{Path: "C:/Users/Me/Dotfiles/Config/tool/config.toml", Edits: 2},
 	}}}
 	if !reflect.DeepEqual(goal.Elsewhere, want) {
 		t.Errorf("elsewhere = %+v\nwant %+v", goal.Elsewhere, want)

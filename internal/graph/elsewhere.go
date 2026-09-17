@@ -100,10 +100,12 @@ func (e Elsewhere) work(p family.Project, at string) (Place, bool) {
 	return pl, ok
 }
 
-// committedIn is the place a commit was made, when that was another family's
-// work. A directory that has gone cannot be placed in any repository, however
-// its nearest surviving ancestor would answer.
-func (e Elsewhere) committedIn(p family.Project, dir string) (Place, bool) {
+// CommittedIn is the place a commit was made in dir, when that was another
+// family's work: the one rule for which commits are recorded, which the edge
+// also asks before reading a repository for one. A directory that has gone
+// cannot be placed in any repository, however its nearest surviving ancestor
+// would answer.
+func (e Elsewhere) CommittedIn(p family.Project, dir string) (Place, bool) {
 	pl, ok := e.work(p, dir)
 	return pl, ok && pl.Exists
 }
@@ -148,12 +150,14 @@ func visits(p family.Project, turns []agent.Turn, dir string, opt Options) []Vis
 			}
 			if pl, ok := opt.Elsewhere.work(p, at); ok {
 				w := in(pl.Family)
-				w.files[agent.NormalisePath(pl.Path)] += t.Edits[f]
+				// Spelled as the machine led there, not in the lower-cased
+				// form paths are compared in.
+				w.files[strings.ReplaceAll(pl.Path, `\`, "/")] += t.Edits[f]
 				w.edits += t.Edits[f]
 			}
 		}
 		for _, c := range t.Committed {
-			if pl, ok := opt.Elsewhere.committedIn(p, c.Dir); ok {
+			if pl, ok := opt.Elsewhere.CommittedIn(p, c.Dir); ok {
 				w := in(pl.Family)
 				w.visit.Commits = append(w.visit.Commits, commitOf(c))
 			}

@@ -90,7 +90,7 @@ func TestAnEditThroughASymlinkIsTheFamilyItLeadsInto(t *testing.T) {
 	families := family.New([]agent.Project{{Path: app, Source: "claude-code"}}, everyAgentsRecord(), &repo.Disk{})
 
 	goal := answered(t, families, app, edited(file, file), false)
-	want := agent.NormalisePath(filepath.Join(site, "index.html"))
+	want := filepath.ToSlash(filepath.Join(site, "index.html"))
 	if len(goal.Elsewhere) != 1 || goal.Elsewhere[0].Family != agent.NormalisePath(site) ||
 		len(goal.Elsewhere[0].Files) != 1 || goal.Elsewhere[0].Files[0].Path != want {
 		t.Errorf("elsewhere = %+v, want two edits to %s in %s", goal.Elsewhere, want, site)
@@ -127,6 +127,12 @@ func TestADeletedDirectoryIsAnsweredAsGone(t *testing.T) {
 	work.Committed = []agent.Commit{{Kind: "committed", At: time.Now(), Dir: filepath.ToSlash(gone)}}
 	if goal := answered(t, families, app, work, false); len(goal.Elsewhere) != 0 {
 		t.Errorf("elsewhere = %+v, want nothing for a commit in a deleted directory", goal.Elsewhere)
+	}
+	// Nor is the sibling's repository read for a commit that is not recorded.
+	p := family.Project{Path: app, Members: []agent.Project{{Path: app}}}
+	v := graph.Visits{Dirs: []string{filepath.ToSlash(gone)}}
+	if e := elsewhere(families, &repo.Disk{}, p, v, nil, false); len(e.Repos) != 0 {
+		t.Errorf("read %d repositories for a commit in a deleted directory", len(e.Repos))
 	}
 }
 

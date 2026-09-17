@@ -382,7 +382,7 @@ func committed(sessions []agent.Session) []*agent.Commit {
 func (e Elsewhere) confirm(p family.Project, made []*agent.Commit) {
 	byFamily := map[string][]*agent.Commit{}
 	for _, c := range made {
-		if pl, ok := e.committedIn(p, c.Dir); ok {
+		if pl, ok := e.CommittedIn(p, c.Dir); ok {
 			byFamily[pl.Family.Key()] = append(byFamily[pl.Family.Key()], c)
 		}
 	}

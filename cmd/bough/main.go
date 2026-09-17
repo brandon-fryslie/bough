@@ -257,8 +257,9 @@ func options(made []agent.MadeFor, disk *repo.Disk, families *family.Resolver, p
 // read, the history of each other family a commit was made in, so its hashes
 // are checked as the project's own are.
 //
-// The graph decides what counts as work done elsewhere. A repository read
-// here for a commit it goes on to set aside is a read and nothing more.
+// [LAW:single-enforcer] The graph decides which commits count as work done
+// elsewhere, and a repository is read only for those, since one read can take
+// seconds.
 func elsewhere(families *family.Resolver, disk *repo.Disk, p family.Project, v graph.Visits, temporary []string, noRepo bool) graph.Elsewhere {
 	e := graph.Elsewhere{Places: map[string]graph.Place{}, Repos: map[string]repo.History{}, Temporary: temporary}
 	for _, at := range slices.Concat(v.Files, v.Dirs) {
@@ -272,14 +273,15 @@ func elsewhere(families *family.Resolver, disk *repo.Disk, p family.Project, v g
 	// there, which may be a worktree on a branch of its own.
 	checkouts := map[string][]string{}
 	for _, dir := range v.Dirs {
-		f := e.Places[dir].Family
-		if f.Evidence == family.None || p.Is(f) {
+		pl, ok := e.CommittedIn(p, dir)
+		if !ok {
 			continue
 		}
-		if _, ok := checkouts[f.Key()]; !ok {
-			checkouts[f.Key()] = []string{f.Name}
+		key := pl.Family.Key()
+		if _, ok := checkouts[key]; !ok {
+			checkouts[key] = []string{pl.Family.Name}
 		}
-		checkouts[f.Key()] = append(checkouts[f.Key()], e.Places[dir].Path)
+		checkouts[key] = append(checkouts[key], pl.Path)
 	}
 	for key, dirs := range checkouts {
 		e.Repos[key] = repo.ReadAll(disk.Checkouts(dirs[0], dirs))
