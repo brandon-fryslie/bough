@@ -5,11 +5,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"testing"
-	"time"
 
 	"github.com/nickelsec/bough/internal/graph"
+	"github.com/nickelsec/bough/internal/synthetic"
 )
 
 // The layout is arithmetic over the graph, so it is checked like arithmetic
@@ -45,20 +44,20 @@ func writeGraphs(t *testing.T, dir string) []string {
 	var paths []string
 
 	cases := map[string]graph.Graph{
-		"busy":   synthetic(10, 11),
-		"quiet":  synthetic(2, 1),
-		"single": synthetic(1, 4),
+		"busy":   shaped(t, 10, 11),
+		"quiet":  shaped(t, 2, 1),
+		"single": shaped(t, 1, 4),
 		// Around three times wider than tall. Long enough not to fit at a
 		// legible scale on a 1440 screen, short enough to fit whole on a 1920
 		// one, which is the shape that used to shrink as the window grew. The
 		// busy fixture is eight times wider and never comes close.
-		"middling": synthetic(12, 3),
+		"middling": shaped(t, 12, 3),
 		// One sitting, one task. Small enough in both directions that the
 		// ceiling on node size is what limits the opening view, rather than
 		// the width or the height of the window. Nothing else here reaches
 		// it: the next smallest is bounded by its height at 1.94 against a
 		// ceiling of 2, so a change to that ceiling went unnoticed.
-		"tiny": synthetic(1, 1),
+		"tiny": shaped(t, 1, 1),
 	}
 	for name, g := range cases {
 		body, err := json.Marshal(g)
@@ -74,40 +73,13 @@ func writeGraphs(t *testing.T, dir string) []string {
 	return paths
 }
 
-// synthetic builds a graph shaped like real history: sittings a day or two
-// apart, each holding a few tasks of differing weight.
-func synthetic(sittings, tasksEach int) graph.Graph {
-	start := time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)
-	g := graph.Graph{Schema: graph.SchemaVersion, Project: graph.Project{Name: "synthetic"}}
-
-	for s := 0; s < sittings; s++ {
-		day := start.AddDate(0, 0, s*2)
-		goal := graph.Goal{
-			ID:     "g" + itoa(s+1),
-			Label:  "a sitting",
-			Period: day.Format("Mon 2 Jan"),
-			Stats: graph.Stats{
-				Start: day, End: day.Add(4 * time.Hour),
-				Turns: 10 * (s + 1), Edits: 12 * (s + 1),
-			},
-		}
-		for i := 0; i < tasksEach; i++ {
-			goal.Tasks = append(goal.Tasks, graph.Task{
-				ID:    goal.ID + ".t" + itoa(i+1),
-				Label: "a piece of work",
-				Stats: graph.Stats{
-					Turns: i + 1, Edits: i * 4,
-					// Every third task is hard, so the crooked path is exercised.
-					Struggle: map[bool]float64{true: 0.7, false: 0.2}[i%3 == 0],
-				},
-				Turns: make([]graph.Turn, i+1),
-			})
-		}
-		g.Goals = append(g.Goals, goal)
+// shaped is a synthetic history whose tasks hold one more prompt each, from
+// one up to as many as the sitting has tasks.
+func shaped(t *testing.T, sittings, tasks int) graph.Graph {
+	t.Helper()
+	s, err := synthetic.NewShape(sittings, tasks, tasks, 0)
+	if err != nil {
+		t.Fatal(err)
 	}
-	return g
-}
-
-func itoa(n int) string {
-	return strconv.Itoa(n)
+	return synthetic.History(s)
 }

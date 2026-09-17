@@ -1,6 +1,7 @@
 package server
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -109,4 +110,8 @@ type scriptError struct {
 
 func (e *scriptError) Error() string {
 	return "line " + itoa(e.line) + ": " + e.what
+}
+
+func itoa(n int) string {
+	return strconv.Itoa(n)
 }
