@@ -30,6 +30,21 @@
   // Small on purpose: it says the work landed, and it must not read as a score.
   var SHIPPED_R = 1.7;
 
+  // The floor for the mark on a sitting that worked in other projects. Larger
+  // than the commit mark, since it is something to hover rather than only to
+  // see.
+  var AWAY_R = 3.2;
+
+  // What the server said about the sittings' work in other projects: each
+  // visit in the words the terminal prints for it, and which projects it can
+  // open, so a name links exactly where the link has a page to land on.
+  var away = window.BOUGH_ELSEWHERE;
+
+  // The projects a name can link to. The server's answer holds only while it
+  // is serving the page: a copy saved from the browser has no server behind
+  // it, so there every project is named without a link.
+  var openable = /^https?:$/.test(location.protocol) ? away.served : {};
+
   // The agents whose history this is, in the order the graph lists them, and
   // each one's name as Go spelled it into the key at the top of the page.
   var agents = graph.project.agents || [];
@@ -51,18 +66,30 @@
   // corner is where the commit mark sits inside the shape: the top right
   // corner of a square, the top point of a diamond, inset so the dot clears
   // the stroke on the smallest task drawn.
+  //
+  // outside is where the mark for work in other projects sits on a day: on a
+  // corner rather than inside, since a day is filled. A square's is the right
+  // hand corner on the side away from the date, which toward names as up (-1)
+  // or down (1). A diamond's is its right point, clear of the date and of the
+  // wire running straight up or down to its first task.
   var SHAPES = [
     {
       name: "square", turn: 0, side: 1,
       corner: function (half, r) {
         var inset = r + half * 0.4;
         return { x: half - inset, y: inset - half };
+      },
+      outside: function (half, toward) {
+        return { x: half, y: toward * half };
       }
     },
     {
       name: "diamond", turn: 45, side: 0.85,
       corner: function (half, r) {
         return { x: 0, y: r * Math.SQRT2 + half * 0.4 - half * 0.85 * Math.SQRT2 };
+      },
+      outside: function (half) {
+        return { x: half * 0.85 * Math.SQRT2, y: 0 };
       }
     }
   ];
@@ -237,6 +264,19 @@
       g.appendChild(drawTask(task, shape));
     });
 
+    // A sitting that worked in other projects carries a mark saying so, and
+    // one that did not carries none. Made before the square is sized, since
+    // sizing the square is what places it.
+    var visits = day.goal.elsewhere || [];
+    if (visits.length) {
+      day.away = el("circle", {
+        class: "away-mark",
+        tabindex: "0",
+        role: "button",
+        "aria-label": "also " + visits.map(function (v) { return doneIn(day.goal, v); }).join("; ")
+      });
+    }
+
     var box = el("rect", { rx: 2, class: "node day-node" });
     square(box, day, day.size, FLOOR.day, shape);
     day.node = box;
@@ -254,6 +294,12 @@
     });
     date.textContent = day.goal.period || "";
     g.appendChild(date);
+
+    // Over the square and the date, so nothing drawn for the day hides it.
+    if (day.away) {
+      g.appendChild(day.away);
+      bindAway(day.away, { kind: "away", id: day.id, day: day, node: day.away });
+    }
 
     bind(g, day);
     return g;
@@ -365,6 +411,16 @@
         item.at.mark.setAttribute("cx", item.at.x + corner.x);
         item.at.mark.setAttribute("cy", item.at.y + corner.y);
       }
+
+      // The mark for work elsewhere rides the day's corner the same way, on
+      // the side away from the date, and is held to a floor against the zoom.
+      if (item.at.away) {
+        var toward = item.at.lean < 0 ? 1 : -1;
+        var outside = item.shape.outside(half, toward);
+        item.at.away.setAttribute("r", Math.max(on * 0.12, AWAY_R / view.scale));
+        item.at.away.setAttribute("cx", item.at.x + outside.x);
+        item.at.away.setAttribute("cy", item.at.y + outside.y);
+      }
     } else {
       item.node.setAttribute("r", half);
     }
@@ -385,6 +441,23 @@
     node.addEventListener("pointerleave", function () { leave(item); });
     // Reaching a node by keyboard shows the same note as reaching it by
     // pointer, or the note is only there for people using a mouse.
+    node.addEventListener("focus", function () { enter(item); });
+    node.addEventListener("blur", function () { leave(item); });
+  }
+
+  // bindAway makes the mark for work elsewhere its own thing to hover, whose
+  // note says what was done where. Clicking it, or pressing Enter on it, is
+  // left to reach the day it sits on, which opens that sitting's record.
+  //
+  // The mark overlaps its day, so the pointer can leave the mark without ever
+  // leaving the day's group, and the day never hears it arrive. Leaving onto
+  // anything in that group hands the hover back to the day.
+  function bindAway(node, item) {
+    node.addEventListener("pointerenter", function () { enter(item); });
+    node.addEventListener("pointerleave", function (e) {
+      leave(item);
+      if (node.parentNode.contains(e.relatedTarget)) enter(item.day);
+    });
     node.addEventListener("focus", function () { enter(item); });
     node.addEventListener("blur", function () { leave(item); });
   }
@@ -615,7 +688,7 @@
     var from = { x: 0, y: 0 };
 
     stage.addEventListener("pointerdown", function (e) {
-      if (e.target.closest(".task, .prompt-node, .day-node")) return;
+      if (e.target.closest(".task, .prompt-node, .day-node, .away-mark")) return;
       if (pop.contains(e.target)) return;
       dragging = true;
       moved = false;
@@ -653,7 +726,7 @@
     stage.addEventListener("click", function (e) {
       if (moved) { moved = false; return; }
       if (pop.contains(e.target)) return;
-      if (!e.target.closest(".task, .prompt-node, .day-node")) {
+      if (!e.target.closest(".task, .prompt-node, .day-node, .away-mark")) {
         clear();
         if (openPanel) openPanel(null);
       }
@@ -807,6 +880,7 @@
   // ancestry returns a node and everything above it, nearest first.
   function ancestry(item) {
     if (item.kind === "day") return [item];
+    if (item.kind === "away") return [item.day];
     if (item.kind === "task") return [item, dayOwning(item)].filter(Boolean);
     var task = owner(item);
     return [item, task, task && dayOwning(task)].filter(Boolean);
@@ -839,6 +913,13 @@
         from.appendChild(document.createTextNode(clip(task.task.label || "", 46)));
         pop.appendChild(from);
       }
+    } else if (item.kind === "away") {
+      // Every project the sitting worked in, one line each, in the words the
+      // terminal prints under the sitting.
+      pop.appendChild(node("p", "pop-kind pop-away", "also"));
+      item.day.goal.elsewhere.forEach(function (v) {
+        pop.appendChild(node("p", "pop-text", doneIn(item.day.goal, v)));
+      });
     } else if (item.kind === "task") {
       pop.appendChild(node("p", "pop-title", clip(item.task.label || "(unnamed)", 110)));
       pop.appendChild(node("p", "pop-when", figures(item.task.stats)));
@@ -922,7 +1003,8 @@
     head.appendChild(node("p", "reader-figures", figures(day.goal.stats)));
     panel.appendChild(head);
 
-    commitList(panel, day.goal.stats.commits);
+    commitList(panel, day.goal.stats.commits, graph.project.repoRead);
+    awayList(panel, day.goal);
 
     var list = node("ol", "turns");
     day.tasks.forEach(function (task) {
@@ -963,7 +1045,7 @@
       }
     }
 
-    commitList(panel, stats.commits);
+    commitList(panel, stats.commits, graph.project.repoRead);
 
     var wanted = null;
     var list = node("ol", "turns");
@@ -985,7 +1067,7 @@
       // A commit sits under the prompt that produced it, so the record reads
       // as what was asked for and what came of it.
       (turn.committed || []).forEach(function (c) {
-        li.appendChild(commitRow(c));
+        li.appendChild(commitRow(c, false, graph.project.repoRead));
       });
       if (i === highlight) wanted = li;
       list.appendChild(li);
@@ -1006,29 +1088,107 @@
   // them. That repetition is deliberate: this answers "what did this ship",
   // which people want without reading, and the ones below answer "what caused
   // it", which only makes sense in place.
-  function commitList(panel, commits) {
+  function commitList(panel, commits, read) {
     var all = commits || [];
     if (!all.length) return;
 
     var box = node("section", "commits");
     box.appendChild(node("h3", "commits-head",
       all.length === 1 ? "1 commit" : all.length + " commits"));
-
-    var list = node("ol", "commit-list");
-    all.forEach(function (c) {
-      list.appendChild(commitRow(c, true));
-    });
-    box.appendChild(list);
+    box.appendChild(commitItems(all, read));
     panel.appendChild(box);
+  }
+
+  // commitItems is the list of a run of commits, read saying whether their
+  // repository confirmed the hashes.
+  function commitItems(commits, read) {
+    var list = node("ol", "commit-list");
+    commits.forEach(function (c) {
+      list.appendChild(commitRow(c, true, read));
+    });
+    return list;
+  }
+
+  // awayList lists what a sitting did in each other project: the project's
+  // name, what was done there in the words the note uses, the files with how
+  // often each changed, and the commits.
+  //
+  // The name opens that project's page on this sitting's days, since the work
+  // was done from here and the other project usually has no sitting of its
+  // own at the time. An ordinary link in the same tab, so the back button
+  // returns here. A project the server cannot open, a repository nobody has
+  // history for, is named without one.
+  function awayList(panel, goal) {
+    var visits = goal.elsewhere || [];
+    if (!visits.length) return;
+
+    var box = node("section", "away");
+    box.appendChild(node("h3", "away-head", "Also worked in"));
+    visits.forEach(function (v) {
+      var one = node("div", "visit");
+      var name = baseName(v.path);
+      var head = node("h4", "visit-name");
+      if (openable[v.family]) {
+        var link = node("a", "visit-link", name);
+        link.href = "/family?key=" + encodeURIComponent(v.family) +
+          "&from=" + dayOf(goal.stats.start) + "&to=" + dayOf(goal.stats.end);
+        head.appendChild(link);
+      } else {
+        head.appendChild(node("span", null, name));
+      }
+      one.appendChild(head);
+      one.appendChild(node("p", "visit-said", doneIn(goal, v)));
+
+      var files = v.files || [];
+      if (files.length) {
+        var list = node("ol", "visit-files");
+        files.forEach(function (f) {
+          var li = node("li", "visit-file");
+          li.appendChild(node("b", null, String(f.edits)));
+          li.appendChild(node("span", null, within(f.path, v.path)));
+          list.appendChild(li);
+        });
+        one.appendChild(list);
+      }
+
+      var commits = v.commits || [];
+      if (commits.length) one.appendChild(commitItems(commits, v.repoRead));
+      box.appendChild(one);
+    });
+    panel.appendChild(box);
+  }
+
+  // doneIn is a visit in the words the terminal prints for it.
+  function doneIn(goal, visit) {
+    return away.said[goal.id][visit.family];
+  }
+
+  // within is a file's path from the project directory it was changed in,
+  // and the whole path when it lies somewhere else.
+  //
+  // The two are compared with one separator and no case, as Go compares
+  // paths: Claude Code's files arrive lower-cased, while the directory keeps
+  // the case it has on disk. The file keeps the spelling it arrived in.
+  function within(file, dir) {
+    var root = comparable(dir).replace(/\/+$/, "") + "/";
+    return comparable(file).indexOf(root) === 0 ? file.slice(root.length) : file;
+  }
+
+  function comparable(path) {
+    return String(path).replace(/\\/g, "/").toLowerCase();
   }
 
   // commitRow draws one commit. As a list item inside the summary, and as a
   // plain line where it hangs under a prompt.
-  function commitRow(c, asItem) {
+  //
+  // read says whether the repository was read. A hash it did not confirm is
+  // whatever the transcript claimed, so it is not set the way a confirmed one
+  // is.
+  function commitRow(c, asItem, read) {
     var row = node(asItem ? "li" : "p", "commit");
 
     if (c.sha) {
-      row.appendChild(node("code", "commit-sha", c.sha));
+      row.appendChild(node("code", "commit-sha" + (read ? "" : " unread"), c.sha));
     }
     // Without a hash there is still something true to say: it happened. That
     // is the case for a commit made with git's quiet flag on a project whose

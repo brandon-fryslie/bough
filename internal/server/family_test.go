@@ -129,6 +129,56 @@ func TestServesASecondFamily(t *testing.T) {
 	}
 }
 
+// A page links to another family exactly when this server can open that
+// family's page: whether it is the page bough opened on or one built on
+// request, it is told which of the families its sittings worked in are
+// served, and each visit in the words the terminal uses.
+func TestAPageIsToldWhichFamiliesItCanOpen(t *testing.T) {
+	third := second()
+	third.Goals[0].ID = "g7"
+	third.Goals[0].Elsewhere = []graph.Visit{
+		{Family: "/work/example", Path: "/work/example", Commits: []graph.Commit{{SHA: "abc1234"}}, RepoRead: true},
+		{Family: "/work/elsewhere", Path: "/work/elsewhere", Files: []graph.FileCount{{Path: "/work/elsewhere/a", Edits: 2}}},
+	}
+	base, built := site(t, sample(), map[string]Build{
+		"/work/example": func() (graph.Graph, error) { return sample(), nil },
+		"/work/second":  func() (graph.Graph, error) { return third, nil },
+	})
+
+	for _, c := range []struct {
+		what    string
+		page    string
+		g       graph.Graph
+		served  []string
+		unknown []string
+	}{
+		{"the first page", body(t, base+"/", http.StatusOK), sample(), []string{"/work/second"}, []string{"/work/unheard"}},
+		{"a family asked for", opened(t, base, built, "/work/second", ""), third, []string{"/work/example"}, []string{"/work/elsewhere"}},
+	} {
+		a := elsewhereIn(t, c.page)
+		if len(a.Served) != len(c.served) {
+			t.Errorf("%s serves %v, want only %v", c.what, a.Served, c.served)
+		}
+		for _, key := range c.served {
+			if !a.Served[key] {
+				t.Errorf("%s is not told it can open %s", c.what, key)
+			}
+		}
+		for _, key := range c.unknown {
+			if _, ok := a.Served[key]; ok {
+				t.Errorf("%s is told it can open %s, which no family has", c.what, key)
+			}
+		}
+		for _, goal := range c.g.Goals {
+			for _, v := range goal.Elsewhere {
+				if got, want := a.Said[goal.ID][v.Family], graph.DoneIn(v); got != want {
+					t.Errorf("%s says %q for the work in %s, where the terminal says %q", c.what, got, v.Family, want)
+				}
+			}
+		}
+	}
+}
+
 // A family is built once. Every request after is served from memory, including
 // a request by key for the family bough opened on, which was built before the
 // server started.

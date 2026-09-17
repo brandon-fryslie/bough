@@ -101,3 +101,81 @@ func TestTextSaysWhenAProjectSpansDirectories(t *testing.T) {
 		}
 	}
 }
+
+// A sitting that worked in another project says so under its own lines, one
+// line for each project, in the words the page uses for the same work: the
+// project by its directory's name, how many files changed there and how many
+// commits were made.
+func TestTextSaysWhatASittingDidElsewhere(t *testing.T) {
+	files := func(n int) []FileCount {
+		out := make([]FileCount, n)
+		for i := range out {
+			out[i] = FileCount{Path: "/work/site/f" + string(rune('a'+i)), Edits: 3}
+		}
+		return out
+	}
+	commits := func(n int) []Commit {
+		out := make([]Commit, n)
+		for i := range out {
+			out[i] = Commit{SHA: "abc123" + string(rune('0'+i))}
+		}
+		return out
+	}
+	site := func(f, c int, read bool) Visit {
+		return Visit{Family: "/work/site", Path: "/work/site", Files: files(f), Commits: commits(c), RepoRead: read}
+	}
+
+	for _, c := range []struct {
+		what   string
+		visits []Visit
+		lines  []string
+	}{
+		{"edits and commits", []Visit{site(12, 2, true)}, []string{"also changed 12 files in site, 2 commits"}},
+		{"edits only", []Visit{site(3, 0, true)}, []string{"also changed 3 files in site"}},
+		{"commits only", []Visit{site(0, 2, true)}, []string{"also 2 commits in site"}},
+		{"one file and one commit", []Visit{site(1, 1, true)}, []string{"also changed 1 file in site, 1 commit"}},
+		{"one commit alone", []Visit{site(0, 1, true)}, []string{"also 1 commit in site"}},
+		{"no work elsewhere", nil, nil},
+		{"a repository that was not read", []Visit{site(2, 2, false)}, []string{
+			"also changed 2 files in site, 2 commits, as the transcript recorded them: the repository was not read",
+		}},
+		{"two projects", []Visit{site(4, 0, true), {Family: "/work/docs", Path: "/work/docs", Commits: commits(1), RepoRead: true}}, []string{
+			"also changed 4 files in site",
+			"also 1 commit in docs",
+		}},
+	} {
+		g := Graph{
+			Project: Project{Name: "app", Path: "/work/app", Agents: []string{"claude-code"}, RepoRead: true},
+			Goals:   []Goal{{ID: "g1", Agent: "claude-code", Period: "Sat 1 Aug", Label: "ship it", Elsewhere: c.visits}},
+		}
+		var out strings.Builder
+		if err := WriteText(&out, g, false, named); err != nil {
+			t.Fatal(err)
+		}
+
+		var also []string
+		for _, line := range strings.Split(out.String(), "\n") {
+			if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, "also ") {
+				also = append(also, trimmed)
+				// Under the sitting, indented the way its other lines are.
+				if !strings.HasPrefix(line, strings.Repeat(" ", 15)+"also ") {
+					t.Errorf("%s: %q is not indented under the sitting", c.what, line)
+				}
+			}
+		}
+		if strings.Join(also, "\n") != strings.Join(c.lines, "\n") {
+			t.Errorf("%s: lines are\n%s\nwant\n%s", c.what, strings.Join(also, "\n"), strings.Join(c.lines, "\n"))
+			continue
+		}
+		for i, v := range c.visits {
+			if also[i] != "also "+DoneIn(v) {
+				t.Errorf("%s: the text says %q where the page is handed %q", c.what, also[i], DoneIn(v))
+			}
+		}
+		// The project is named, never its whole path, and no hash is printed
+		// for work elsewhere, least of all one nothing checked.
+		if strings.Contains(out.String(), "/work/site") || strings.Contains(out.String(), "abc123") {
+			t.Errorf("%s: the output prints a path or a hash:\n%s", c.what, out.String())
+		}
+	}
+}
