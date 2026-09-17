@@ -200,6 +200,12 @@ func TestADriverThatCannotRunSaysWhy(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "npx @puppeteer/browsers install chromedriver") {
 		t.Errorf("a missing driver failed with %v, want how to install one", err)
 	}
+	// The reason it could not run is kept, since a driver that is there but
+	// not executable needs no installing.
+	var why *exec.Error
+	if !errors.As(err, &why) {
+		t.Errorf("a missing driver failed with %v, which dropped why", err)
+	}
 
 	t.Setenv(fakeDriver, "exit")
 	begun := time.Now()

@@ -70,7 +70,7 @@ const ready = 10 * time.Second
 func Start(ctx context.Context, b Browser) (*Driver, error) {
 	path, err := exec.LookPath(b.driver)
 	if err != nil {
-		return nil, fmt.Errorf("webdriver: no %s to drive %s: %s", b.driver, b.name, b.setup)
+		return nil, fmt.Errorf("webdriver: cannot run a driver for %s (%s): %w", b.name, b.setup, err)
 	}
 	port, err := freePort()
 	if err != nil {

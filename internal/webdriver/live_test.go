@@ -63,7 +63,8 @@ func TestRealInputReachesTheBrowser(t *testing.T) {
 	t.Cleanup(site.Close)
 
 	known := map[string]Browser{"chrome": Chrome(), "safari": Safari()}
-	for _, name := range strings.Split(*browsers, ",") {
+	names := strings.FieldsFunc(*browsers, func(r rune) bool { return r == ',' || r == ' ' })
+	for _, name := range names {
 		t.Run(name, func(t *testing.T) {
 			b, ok := known[name]
 			if !ok {
@@ -93,8 +94,11 @@ func open(ctx context.Context, t *testing.T, b Browser) *Session {
 	}
 	t.Cleanup(func() {
 		// The test's own deadline may have passed by now; closing still has to
-		// happen.
-		if err := s.Close(context.WithoutCancel(ctx)); err != nil {
+		// happen, but not wait on a hung browser forever, or the driver is never
+		// stopped either.
+		closing, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		if err := s.Close(closing); err != nil {
 			t.Error(err)
 		}
 	})
