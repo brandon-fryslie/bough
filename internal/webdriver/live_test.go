@@ -20,22 +20,6 @@ import (
 //	go test ./internal/webdriver -browsers=chrome,safari
 var browsers = flag.String("browsers", "", "real browsers to drive, comma separated: chrome, safari")
 
-// driven is a browser to drive, and why input sent through its driver cannot
-// be trusted to reach the page, if it cannot.
-type driven struct {
-	browser   Browser
-	untrusted string
-}
-
-// known is every browser the test can drive, and what was found driving it.
-var known = map[string]driven{
-	"chrome": {browser: Chrome()},
-	// Seen in Safari 26.3 on macOS 26.3: most wheel steps in an action sequence reach
-	// the page as no event, and sequences after the first in a session reach it
-	// as nothing. Measuring Safari needs input from outside its driver.
-	"safari": {browser: Safari(), untrusted: "safaridriver drops most of the input it is sent"},
-}
-
 // page fills the window and notes each input event that reaches it.
 const page = `<!doctype html>
 <style>html, body { margin: 0; height: 100%; }</style>
@@ -82,27 +66,27 @@ func TestRealBrowsers(t *testing.T) {
 	names := strings.FieldsFunc(*browsers, func(r rune) bool { return r == ',' || r == ' ' })
 	for _, name := range names {
 		t.Run(name, func(t *testing.T) {
-			d, ok := known[name]
-			if !ok {
-				t.Fatalf("no browser called %q", name)
+			b, err := Named(name)
+			if err != nil {
+				t.Fatal(err)
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
 			// One session a browser, because Safari allows only one at a time.
-			s := open(ctx, t, d.browser)
+			s := open(ctx, t, b)
 
 			t.Run("frames", framesKeepComing(ctx, s, site.URL))
-			t.Run("input", d.withInput(inputReachesThePage(ctx, s, site.URL)))
-			t.Run("probe", d.withInput(probeRecordsIt(ctx, s, site.URL)))
+			t.Run("input", withInput(b, inputReachesThePage(ctx, s, site.URL)))
+			t.Run("probe", withInput(b, probeRecordsIt(ctx, s, site.URL)))
 		})
 	}
 }
 
-// withInput is check, run only where the driver's input can be trusted.
-func (d driven) withInput(check func(*testing.T)) func(*testing.T) {
+// withInput is check, run only where input through b's driver reaches the page.
+func withInput(b Browser, check func(*testing.T)) func(*testing.T) {
 	return func(t *testing.T) {
-		if d.untrusted != "" {
-			t.Skip(d.untrusted)
+		if err := b.Input(); err != nil {
+			t.Skip(err)
 		}
 		check(t)
 	}
