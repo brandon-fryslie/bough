@@ -115,8 +115,9 @@ var (
 		project("/Users/bmf/code/docs", nil),
 		project("/Users/bmf/writing/docs", nil),
 
-		// A deleted directory on a Windows drive.
+		// A deleted directory on a Windows drive, and a worktree made under it.
 		project(`D:\work\site\gone`, nil),
+		project(`D:\work\site\gone\.claude\worktrees\w`, worktreeOf(`D:\work\site\gone`)),
 	}
 
 	exists = []string{
@@ -229,6 +230,9 @@ func TestResolve(t *testing.T) {
 		{"a deleted directory on a Windows drive walks to the drive's root",
 			`D:\work\site\gone\index.html`,
 			Family{"D:/work/site", Repository}},
+		{"a worktree recorded under a deleted Windows directory follows it to the repository",
+			`D:\work\site\gone\.claude\worktrees\w`,
+			Family{"D:/work/site", Recorded}},
 		{"a relative path is nowhere in particular",
 			"src/main.go",
 			Family{"src/main.go", None}},

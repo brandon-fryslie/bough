@@ -221,7 +221,9 @@ func (r *Resolver) recorded(k *known, followed map[string]bool) (Family, bool) {
 		return Family{}, false
 	}
 	for _, other := range matched {
-		return r.resolve(other.path, followed), true
+		// The path as the source spelled it, which may not be the form the
+		// walk climbs on.
+		return r.resolve(slashed(other.path), followed), true
 	}
 	return Family{}, false
 }
