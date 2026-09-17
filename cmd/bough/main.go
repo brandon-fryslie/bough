@@ -171,17 +171,11 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	sessions, err := read(sources, target)
+	b := builder{sources: sources, made: made, disk: disk, families: families, noRepo: *noRepo, stderr: stderr}
+	g, err := b.build(target)
 	if err != nil {
-		// Some transcripts may be unreadable while others are fine, so say so
-		// and carry on with what did load.
-		fmt.Fprintf(stderr, "bough: some history could not be read: %v\n", err)
+		return err
 	}
-	if len(sessions) == 0 {
-		return fmt.Errorf("no readable history for %s", target.Name())
-	}
-
-	g := graph.Build(target, sessions, options(made, disk, families, target, sessions, *noRepo))
 
 	w := stdout
 	if *out != "" {
@@ -200,9 +194,52 @@ func run(args []string, stdout, stderr io.Writer) error {
 	}
 
 	if useBrowser(*asText, *out, stdout) {
-		return browse(g, stderr)
+		return browse(target.Key(), g, b.every(whole), stderr)
 	}
 	return graph.WriteText(w, g, *verbose, registry.Display)
+}
+
+// builder is what building a project's graph needs from this edge.
+type builder struct {
+	sources  map[string]agent.Source
+	made     []agent.MadeFor
+	disk     *repo.Disk
+	families *family.Resolver
+	noRepo   bool
+	stderr   io.Writer
+}
+
+// build is a project's graph, or why there is none.
+//
+// [LAW:single-enforcer] The one way from a project to its graph. The page bough
+// opens on, --json, the text view and every family the running server is later
+// asked for all come through here, so none of them can read or build a project
+// differently from the others.
+//
+// Some transcripts may be unreadable while others are fine, so a partial read
+// says so and carries on with what did load. Nothing loading at all is no
+// graph, since an empty drawing would read as a project with no work in it.
+func (b builder) build(p family.Project) (graph.Graph, error) {
+	sessions, err := read(b.sources, p)
+	if len(sessions) == 0 {
+		return graph.Graph{}, errors.Join(fmt.Errorf("no readable history for %s", p.Name()), err)
+	}
+	if err != nil {
+		fmt.Fprintf(b.stderr, "bough: some history of %s could not be read: %v\n", p.Name(), err)
+	}
+	return graph.Build(p, sessions, options(b.made, b.disk, b.families, p, sessions, b.noRepo)), nil
+}
+
+// every is a build for each project, by the key the server addresses it by.
+//
+// Each is safe to run beside another: the sources and the resolver are only
+// read, and the disk guards what it remembers.
+func (b builder) every(projects []family.Project) map[string]server.Build {
+	builds := make(map[string]server.Build, len(projects))
+	for _, p := range projects {
+		builds[p.Key()] = func() (graph.Graph, error) { return b.build(p) }
+	}
+	return builds
 }
 
 // read is a project's history: each agent's members read by that agent's own
@@ -351,14 +388,15 @@ func useBrowser(textWanted bool, outFile string, stdout io.Writer) bool {
 	return ok && term.IsTerminal(int(f.Fd()))
 }
 
-// browse serves the graph and waits for the reader to finish with it.
-func browse(g graph.Graph, stderr io.Writer) error {
+// browse serves the graph, and any other family's when it is asked for, and
+// waits for the reader to finish with it. key is the family g was built for.
+func browse(key string, g graph.Graph, families map[string]server.Build, stderr io.Writer) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
 	// The address is printed before the browser is asked for, so a terminal
 	// that cannot open one still tells the reader where to look.
-	err := server.Serve(ctx, g, registry.Display, func(url string) {
+	err := server.Serve(ctx, key, g, families, registry.Display, func(url string) {
 		fmt.Fprintf(stderr, "bough is showing %s at %s\n", g.Project.Name, url)
 		fmt.Fprintf(stderr, "press ctrl-c when you are done\n")
 		openBrowser(url)
