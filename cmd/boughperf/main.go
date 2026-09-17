@@ -71,6 +71,19 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return badFlags
 	}
 
+	// [LAW:effects-at-boundaries] the flags said what to measure; what they
+	// name is only looked for now, so a missing file or driver fails as the
+	// run failing, not as the flags being wrong.
+	g, err := p.history.read()
+	if err != nil {
+		fmt.Fprintln(stderr, "boughperf:", err)
+		return someFailed
+	}
+	browsers, err := p.browsers(stderr)
+	if err != nil {
+		fmt.Fprintln(stderr, "boughperf:", err)
+		return someFailed
+	}
 	revision, err := revision()
 	if err != nil {
 		fmt.Fprintln(stderr, "boughperf:", err)
@@ -81,9 +94,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// windows could not be closed in order anyway, and a run cut short is not
 	// one to compare against.
 	ctx := context.Background()
-	r := results{Started: started, Revision: revision, Graph: p.graphName, Repeats: p.repeats}
-	err = serve(ctx, p.graph, func(url string) {
-		for _, b := range p.browsers {
+	r := results{Started: started, Revision: revision, Graph: p.history.name, Repeats: p.repeats}
+	err = serve(ctx, g, func(url string) {
+		for _, b := range browsers {
 			r.Browsers = append(r.Browsers, measure(ctx, b, url, p, stderr))
 		}
 	})
@@ -92,7 +105,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "boughperf: serving the page:", err)
 	}
 
-	fmt.Fprintf(stdout, "%s at %s, %d runs each\n", p.graphName, revision, p.repeats)
+	fmt.Fprintf(stdout, "%s at %s, %d runs each\n", p.history.name, revision, p.repeats)
 	recorded := 0
 	for _, b := range r.Browsers {
 		b.report(stdout)
@@ -115,17 +128,25 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return measuredAll
 }
 
-// plan is what an invocation was asked to measure.
+// plan is what an invocation was asked to measure. The graph and the browsers
+// are described rather than found, since finding them reads the machine.
 type plan struct {
-	graph     graph.Graph
-	graphName string // what the graph is, as the results name it
-	browsers  []webdriver.Browser
+	history   history
+	browsers  func(stderr io.Writer) ([]webdriver.Browser, error)
 	scenarios []scenario.Scenario
 	repeats   int
 	out       string
 }
 
-// parse reads the flags into a plan, refusing any it could not carry out.
+// history is the graph to measure: its name, as the results give it, and how
+// to read it.
+type history struct {
+	name string
+	read func() (graph.Graph, error)
+}
+
+// parse reads the flags into a plan, refusing any that name nothing or ask
+// for what cannot be done. It reads nothing but the flags.
 func parse(args []string, started time.Time, stderr io.Writer) (plan, error) {
 	fs := flag.NewFlagSet("boughperf", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -150,12 +171,14 @@ func parse(args []string, started time.Time, stderr io.Writer) (plan, error) {
 	if *repeats < 1 {
 		return plan{}, fmt.Errorf("-repeats is %d, and a scenario is played at least once", *repeats)
 	}
+	sizeSet := false
+	fs.Visit(func(f *flag.Flag) { sizeSet = sizeSet || f.Name == "size" })
 
-	g, name, err := history(*size, *file, fs)
+	h, err := pickHistory(*size, sizeSet, *file)
 	if err != nil {
 		return plan{}, err
 	}
-	bs, err := pickBrowsers(*browsers, stderr)
+	bs, err := pickBrowsers(*browsers)
 	if err != nil {
 		return plan{}, err
 	}
@@ -163,48 +186,56 @@ func parse(args []string, started time.Time, stderr io.Writer) (plan, error) {
 	if err != nil {
 		return plan{}, err
 	}
-	return plan{graph: g, graphName: name, browsers: bs, scenarios: scs, repeats: *repeats, out: *out}, nil
+	return plan{history: h, browsers: bs, scenarios: scs, repeats: *repeats, out: *out}, nil
 }
 
-// history is the graph asked for and its name: a graph file when -graph names
-// one, and the synthetic size otherwise.
-func history(size, file string, fs *flag.FlagSet) (graph.Graph, string, error) {
-	sizeSet := false
-	fs.Visit(func(f *flag.Flag) { sizeSet = sizeSet || f.Name == "size" })
+// pickHistory is the graph file -graph names, or the synthetic size.
+func pickHistory(size string, sizeSet bool, file string) (history, error) {
 	if file == "" {
 		shape, err := synthetic.Sized(size)
-		return synthetic.History(shape), "synthetic " + size, err
+		return history{
+			name: "synthetic " + size,
+			read: func() (graph.Graph, error) { return synthetic.History(shape), nil },
+		}, err
 	}
 	if sizeSet {
-		return graph.Graph{}, "", errors.New("-size and -graph each name the graph to measure; give one")
+		return history{}, errors.New("-size and -graph each name the graph to measure; give one")
 	}
-	f, err := os.Open(file) //#nosec G304 -- the graph the person running this named to measure
-	if err != nil {
-		return graph.Graph{}, "", err
-	}
-	defer f.Close()
-	g, err := graph.Read(f)
-	if err != nil {
-		return graph.Graph{}, "", fmt.Errorf("%s: %w", file, err)
-	}
-	return g, file, nil
+	return history{name: file, read: func() (graph.Graph, error) {
+		f, err := os.Open(file) //#nosec G304 -- the graph the person running this named to measure
+		if err != nil {
+			return graph.Graph{}, err
+		}
+		defer f.Close()
+		g, err := graph.Read(f)
+		if err != nil {
+			return graph.Graph{}, fmt.Errorf("%s: %w", file, err)
+		}
+		return g, nil
+	}}, nil
 }
 
-// pickBrowsers is the browsers named, or every browser whose driver is
-// installed when none are. A browser left out is said to be, with why, so the
-// table's silence about it is never mistaken for a pass.
-func pickBrowsers(names string, stderr io.Writer) ([]webdriver.Browser, error) {
-	if names != "" {
-		var out []webdriver.Browser
-		for _, name := range split(names) {
-			b, err := webdriver.Named(name)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, b)
-		}
-		return out, nil
+// pickBrowsers is the browsers named, or, when none are, every browser whose
+// driver is installed once the machine is asked. A browser left out is said to
+// be, with why, so the table's silence about it is never mistaken for a pass.
+func pickBrowsers(names string) (func(io.Writer) ([]webdriver.Browser, error), error) {
+	if names == "" {
+		return installed, nil
 	}
+	var out []webdriver.Browser
+	for _, name := range split(names) {
+		b, err := webdriver.Named(name)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return func(io.Writer) ([]webdriver.Browser, error) { return out, nil }, nil
+}
+
+// installed is every browser whose driver is installed, and an error when
+// there are none.
+func installed(stderr io.Writer) ([]webdriver.Browser, error) {
 	var out []webdriver.Browser
 	var missing []error
 	for _, b := range webdriver.Browsers() {

@@ -56,7 +56,6 @@ func TestFlagsThatCannotBeCarriedOutAreRefused(t *testing.T) {
 		{[]string{"-browsers", "opera"}, "chrome and safari"},
 		{[]string{"-browsers", "chrome", "-scenarios", "pinch"}, "drag-pan"},
 		{[]string{"-size", "small", "-graph", "g.json"}, "give one"},
-		{[]string{"-browsers", "chrome", "-graph", filepath.Join(t.TempDir(), "absent.json")}, "absent.json"},
 		{[]string{"-browsers", "chrome", "small"}, "unexpected"},
 	} {
 		out := filepath.Join(t.TempDir(), "results.json")
@@ -71,14 +70,37 @@ func TestFlagsThatCannotBeCarriedOutAreRefused(t *testing.T) {
 	}
 }
 
-// With no browser named and no browser's driver installed, there is nothing to
-// play in, which is said, with how to set one up, rather than passing quietly.
-func TestNoInstalledBrowserIsRefused(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
-	var stderr bytes.Buffer
-	status := run([]string{"-o", filepath.Join(t.TempDir(), "r.json")}, &bytes.Buffer{}, &stderr)
-	if status != badFlags || !strings.Contains(stderr.String(), "chromedriver") {
-		t.Errorf("status %d, said %q; want %d, saying how to install chromedriver", status, stderr.String(), badFlags)
+// Flags that are right but name what the machine does not have fail as a run
+// that could not happen, status 1, not as flags to fix, and keep nothing.
+func TestWhatTheFlagsNameIsLookedForAsTheRun(t *testing.T) {
+	older := filepath.Join(t.TempDir(), "older.json")
+	if err := os.WriteFile(older, []byte(`{"schema":1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name string
+		args []string
+		path string
+		says string
+	}{
+		{"a graph file that is not there", []string{"-browsers", "chrome", "-graph", filepath.Join(t.TempDir(), "absent.json")}, "", "absent.json"},
+		{"a graph in an older schema", []string{"-browsers", "chrome", "-graph", older}, "", "schema 1"},
+		{"no installed driver", nil, t.TempDir(), "chromedriver"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if c.path != "" {
+				t.Setenv("PATH", c.path)
+			}
+			out := filepath.Join(t.TempDir(), "results.json")
+			var stderr bytes.Buffer
+			status := run(append(c.args, "-o", out), &bytes.Buffer{}, &stderr)
+			if status != someFailed || !strings.Contains(stderr.String(), c.says) {
+				t.Errorf("status %d, said %q; want %d, saying %q", status, stderr.String(), someFailed, c.says)
+			}
+			if _, err := os.Stat(out); !errors.Is(err, os.ErrNotExist) {
+				t.Error("kept results for an invocation that measured nothing")
+			}
+		})
 	}
 }
 
@@ -103,8 +125,12 @@ func TestAGraphFileIsWhatIsMeasured(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.graphName != file || len(p.graph.Goals) != len(written.Goals) || p.graph.Project.Agents[1] != "codex" {
-		t.Errorf("measuring %q with %d goals by %v, want %s's %d goals by two agents", p.graphName, len(p.graph.Goals), p.graph.Project.Agents, file, len(written.Goals))
+	g, err := p.history.read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.history.name != file || len(g.Goals) != len(written.Goals) || g.Project.Agents[1] != "codex" {
+		t.Errorf("measuring %q with %d goals by %v, want %s's %d goals by two agents", p.history.name, len(g.Goals), g.Project.Agents, file, len(written.Goals))
 	}
 }
 
