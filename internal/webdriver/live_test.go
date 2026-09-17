@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/nickelsec/bough/internal/perf"
 )
 
 // browsers names the real browsers to drive. Driving one opens a window and
@@ -67,30 +69,37 @@ func TestRealInputReachesTheBrowser(t *testing.T) {
 			if !ok {
 				t.Fatalf("no browser called %q", name)
 			}
-			drive(t, b, site.URL)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			// One session a browser, because Safari allows only one at a time.
+			s := open(ctx, t, b)
+			t.Run("input", func(t *testing.T) { inputReachesThePage(ctx, t, s, site.URL) })
+			t.Run("probe", func(t *testing.T) { probeRecordsIt(ctx, t, s, site.URL) })
 		})
 	}
 }
 
-func drive(t *testing.T, b Browser, url string) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-
+// open starts b's driver and a session in it, both ended when the test is.
+func open(ctx context.Context, t *testing.T, b Browser) *Session {
+	t.Helper()
 	d, err := Start(ctx, b)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer d.Stop()
+	t.Cleanup(d.Stop)
 	s, err := d.NewSession(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() {
-		if err := s.Close(ctx); err != nil {
+	t.Cleanup(func() {
+		if err := s.Close(context.Background()); err != nil {
 			t.Error(err)
 		}
-	}()
+	})
+	return s
+}
 
+func inputReachesThePage(ctx context.Context, t *testing.T, s *Session, url string) {
 	if err := s.Navigate(ctx, url); err != nil {
 		t.Fatal(err)
 	}
@@ -135,5 +144,39 @@ func drive(t *testing.T, b Browser, url string) {
 	if lag := got.Now - got.Frame; lag < -1 || lag > 1000 {
 		t.Errorf("frame started %.1f but the clock read %.1f inside it: not the page's clock", got.Frame, got.Now)
 	}
-	t.Logf("%s saw %v; frame at %.1f, clock %.1f", b.name, types, got.Frame, got.Now)
+	t.Logf("saw %v; frame at %.1f, clock %.1f", types, got.Frame, got.Now)
+}
+
+// The frame probe, fed real wheel input, hands back a recording that parses
+// and judges some frames: the probe and this client meet here and nowhere
+// else before a run.
+func probeRecordsIt(ctx context.Context, t *testing.T, s *Session, url string) {
+	if err := s.Navigate(ctx, url); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ExecuteAsync(ctx, perf.Probe+"\n__boughProbe.start(arguments[0], arguments[1]);", perf.Quiet); err != nil {
+		t.Fatal(err)
+	}
+
+	turns := make([]WheelStep, 20)
+	for i := range turns {
+		turns[i] = Scroll{X: 200, Y: 150, DeltaY: 40, Over: 16 * time.Millisecond}
+	}
+	if err := s.Perform(ctx, Actions{Wheel: turns}); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := s.ExecuteAsync(ctx, "__boughProbe.finish(arguments[0]);")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := perf.ParseRecording(raw)
+	if err != nil {
+		t.Fatalf("the probe's recording did not parse: %v\n%s", err, raw)
+	}
+	summary := perf.Summarize(r)
+	if summary.Frames == 0 {
+		t.Errorf("no frames judged: %+v", summary)
+	}
+	t.Logf("%+v", summary)
 }
