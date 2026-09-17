@@ -74,7 +74,8 @@ const (
 // Family is where a directory belongs.
 type Family struct {
 	// Name is the directory the family is known by: the repository's main
-	// working tree, or the project's own path, as the source spelled it.
+	// working tree as the Disk spells it, or the project's own path as the
+	// source spelled it.
 	Name string
 
 	// Evidence says what joined the directory to the family.

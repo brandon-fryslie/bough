@@ -192,9 +192,9 @@ func TestDiskNamesTheMainTree(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// git answers with symlinks resolved, and the temporary directory on macOS
-	// sits behind one. Where the directory asked about is not inside the tree,
-	// that resolved spelling is the only one there is.
+	// One repository has one spelling from wherever it is asked about, the one
+	// with symlinks resolved. The temporary directory on macOS sits behind a
+	// symlink, so this is tested on every run there.
 	resolved := func(p string) string {
 		t.Helper()
 		r, err := filepath.EvalSymlinks(p)
@@ -206,12 +206,12 @@ func TestDiskNamesTheMainTree(t *testing.T) {
 
 	var d Disk
 	for _, c := range []struct{ dir, want string }{
-		{main, main},
-		{filepath.Join(main, "sub", "deep"), main},
-		{filepath.Join(alias, "sub", "deep"), alias},
+		{main, resolved(main)},
+		{filepath.Join(main, "sub", "deep"), resolved(main)},
+		{filepath.Join(alias, "sub", "deep"), resolved(main)},
 		{linked, resolved(main)},
-		{bareTree, bareTree},
-		{filepath.Join(main, "vendor", "sub"), filepath.Join(main, "vendor", "sub")},
+		{bareTree, resolved(bareTree)},
+		{filepath.Join(main, "vendor", "sub"), resolved(filepath.Join(main, "vendor", "sub"))},
 		{subLinked, resolved(filepath.Join(main, "vendor", "sub"))},
 	} {
 		if got := d.MainTree(c.dir); got != c.want {

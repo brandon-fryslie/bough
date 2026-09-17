@@ -31,10 +31,12 @@ func (d *Disk) Exists(dir string) bool {
 // when it sits in none, git is not installed, or git could not say.
 //
 // The main tree names a family, so a linked worktree and a subdirectory of the
-// checkout both answer with the checkout itself. It is spelled the way dir was
-// where dir lies inside it, since git answers with every symlink resolved and
-// a family named /private/tmp/x would not match the project recorded as
-// /tmp/x.
+// checkout both answer with the checkout itself. It is spelled the way git
+// spells it, with every symlink resolved, whatever spelling dir was asked in:
+// a repository has that one spelling from wherever it is reached, where the
+// asker's spelling would name a checkout /tmp/x from inside it and
+// /private/tmp/x from its linked worktree outside, and split one family in
+// two.
 func (d *Disk) MainTree(dir string) string {
 	d.mu.Lock()
 	tree, ok := d.trees[dir]
@@ -46,7 +48,7 @@ func (d *Disk) MainTree(dir string) string {
 	// Git runs unlocked, so callers sharing a Disk wait on one another only
 	// for the map. Two asking about one directory at once both run git and
 	// get the same answer.
-	tree = spelledAs(dir, mainTree(dir))
+	tree = mainTree(dir)
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -117,23 +119,4 @@ func resolved(dir, p string) string {
 		return r
 	}
 	return filepath.Clean(p)
-}
-
-// spelledAs writes tree the way dir spells it, when dir lies inside tree: the
-// ancestor of dir that is tree once symlinks are resolved. A tree dir is not
-// inside, a linked worktree's main tree for one, has no spelling of dir's to
-// take, and stays as git wrote it.
-func spelledAs(dir, tree string) string {
-	if tree == "" {
-		return ""
-	}
-	target := resolved(dir, tree)
-	for p := filepath.Clean(dir); ; p = filepath.Dir(p) {
-		if resolved(p, p) == target {
-			return p
-		}
-		if filepath.Dir(p) == p {
-			return tree
-		}
-	}
 }
