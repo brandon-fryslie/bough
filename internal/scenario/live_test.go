@@ -49,7 +49,7 @@ func TestScenariosPlayOnASyntheticHistory(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				t.Logf("stage %+v, bare canvas at %v, %d nodes to point at", g.Stage, g.Empty, len(g.Nodes))
+				t.Logf("stage %+v, bare canvas at %v, %d prompts to point at", g.Stage, g.Empty, len(g.Prompts))
 			})
 			for _, sc := range All {
 				t.Run(sc.Name, func(t *testing.T) {

@@ -6,20 +6,24 @@
 //
 //   __boughPage.drawn(done)      waits until the diagram is drawn and has
 //                                finished growing in
-//   __boughPage.geometry(done)   where the stage, bare canvas and nodes are
+//   __boughPage.geometry(done)   where the stage, bare canvas and prompts are
 //   __boughPage.view(done)       where the diagram is, how large, and the note
 //                                that is up
 (function (root) {
   var doc = root.document;
-  var NODES = ".task, .prompt-node, .day-node";
+  // A day's group holds its square, its date, and its tasks with their
+  // prompts, and the page notes whatever in it the pointer enters. PROMPT is
+  // the innermost of those, which a pointer arriving on always enters.
+  var DAY = ".day";
+  var PROMPT = ".prompt-node";
 
   function canvas() { return doc.getElementById("canvas"); }
 
-  // Bare canvas is stage the pointer can press without landing on a node, a
-  // control or anything else drawn over the stage.
+  // Bare canvas is stage the pointer can rest on or press without entering
+  // anything the page notes, or a control drawn over the stage.
   function bare(stage, x, y) {
     var hit = doc.elementFromPoint(x, y);
-    return hit !== null && stage.contains(hit) && hit.closest(NODES) === null;
+    return hit !== null && stage.contains(hit) && hit.closest(DAY) === null;
   }
 
   // MARGIN is how far bare canvas has to stay bare around a point. Nodes keep
@@ -59,21 +63,20 @@
         });
       }) || null;
 
-      // A node counts when its middle is on the stage and pointing there
-      // reaches it, not a node drawn inside it or a control drawn over it.
-      var nodes = [];
-      stage.querySelectorAll(NODES).forEach(function (node) {
-        var r = node.getBoundingClientRect();
+      // A prompt counts when pointing at its middle reaches it, not something
+      // drawn over it.
+      var prompts = [];
+      stage.querySelectorAll(PROMPT).forEach(function (prompt) {
+        var r = prompt.getBoundingClientRect();
         var p = { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
-        var hit = doc.elementFromPoint(p.x, p.y);
-        if (hit !== null && hit.closest(NODES) === node) nodes.push(p);
+        if (doc.elementFromPoint(p.x, p.y) === prompt) prompts.push(p);
       });
-      nodes.sort(function (a, b) { return a.x - b.x || a.y - b.y; });
+      prompts.sort(function (a, b) { return a.x - b.x || a.y - b.y; });
 
       done({
         stage: { x: Math.round(box.left), y: Math.round(box.top), width: Math.round(box.width), height: Math.round(box.height) },
         empty: empty,
-        nodes: nodes
+        prompts: prompts
       });
     },
 
@@ -86,7 +89,7 @@
         y: Number(t[2]),
         scale: Number(t[3]),
         // A note is told apart from another by what it says and where it
-        // stands, since two nodes can say the same thing.
+        // stands, since two prompts can say the same thing.
         note: pop.hidden ? "" : pop.textContent + " @ " + Math.round(r.left) + "," + Math.round(r.top)
       });
     }

@@ -29,14 +29,16 @@ type Rect struct {
 // Geometry is where things are on the page as a browser drew it. It is read
 // from the page rather than assumed, so a gesture lands where that browser, at
 // that window size, put things. Read by Open, it always has bare canvas and at
-// least one node.
+// least one prompt.
 type Geometry struct {
 	Stage Rect
-	// Empty is bare canvas near the stage's middle, where a press pans rather
-	// than picking a node.
+	// Empty is bare canvas near the stage's middle, where the pointer rests or
+	// presses without the page noting anything under it.
 	Empty Point
-	// Nodes is the middle of every node that pointing reaches, left to right.
-	Nodes []Point
+	// Prompts is the middle of every prompt that pointing reaches, left to
+	// right. A prompt is the innermost thing the page notes, so arriving on one
+	// always shows its note.
+	Prompts []Point
 }
 
 // View is what the page shows: where the diagram is, how large, and the note
@@ -132,11 +134,12 @@ var All = []Scenario{
 		Took:  func(before, after View) bool { return after.Scale < before.Scale && after.Note == "" },
 	},
 	{
-		// From bare canvas across the nodes left to right, each one's note
-		// shown in turn.
+		// From bare canvas across the prompts left to right, entering and
+		// leaving their tasks and days on the way, each prompt's note shown in
+		// turn.
 		Name: "hover-sweep",
 		Place: func(g Geometry) Gesture {
-			return Pointer{From: g.Empty, Through: spread(g.Nodes, 40), Every: 2 * mouse}
+			return Pointer{From: g.Empty, Through: spread(g.Prompts, 40), Every: 2 * mouse}
 		},
 		Took: func(before, after View) bool { return after.Note != "" && after.Note != before.Note },
 	},

@@ -34,9 +34,9 @@ func Open(ctx context.Context, s *webdriver.Session, url string) (Geometry, erro
 // page with nowhere for a gesture to land.
 func readGeometry(raw json.RawMessage) (Geometry, error) {
 	var wire struct {
-		Stage Rect    `json:"stage"`
-		Empty *Point  `json:"empty"`
-		Nodes []Point `json:"nodes"`
+		Stage   Rect    `json:"stage"`
+		Empty   *Point  `json:"empty"`
+		Prompts []Point `json:"prompts"`
 	}
 	if err := json.Unmarshal(raw, &wire); err != nil {
 		return Geometry{}, fmt.Errorf("reading the page's geometry: %w\n%s", err, raw)
@@ -46,10 +46,10 @@ func readGeometry(raw json.RawMessage) (Geometry, error) {
 		return Geometry{}, fmt.Errorf("the stage is %dx%d, too small to point at", wire.Stage.Width, wire.Stage.Height)
 	case wire.Empty == nil:
 		return Geometry{}, errors.New("no bare canvas in the middle of the stage to press on")
-	case len(wire.Nodes) == 0:
-		return Geometry{}, errors.New("no node on the stage that pointing reaches")
+	case len(wire.Prompts) == 0:
+		return Geometry{}, errors.New("no prompt on the stage that pointing reaches")
 	}
-	return Geometry{Stage: wire.Stage, Empty: *wire.Empty, Nodes: wire.Nodes}, nil
+	return Geometry{Stage: wire.Stage, Empty: *wire.Empty, Prompts: wire.Prompts}, nil
 }
 
 // Run plays sc on the page at url in s and hands back how the page drew it.
