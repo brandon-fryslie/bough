@@ -109,8 +109,10 @@ func TestWithoutGitEnv(t *testing.T) {
 		"HOME=/Users/bmf", "GIT_DIR=/elsewhere/.git", "GIT_WORK_TREE=/elsewhere",
 		"GIT_CEILING_DIRECTORIES=/Users", "GIT_OBJECT_DIRECTORY=/q",
 		"GIT_EXEC_PATH=/opt/git/libexec", "GIT_TRACE=1", "GIT_CONFIG_GLOBAL=/x/gitconfig",
+		"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=safe.directory", "GIT_CONFIG_VALUE_0=*",
 	})
-	want := []string{"HOME=/Users/bmf", "GIT_EXEC_PATH=/opt/git/libexec", "GIT_TRACE=1", "GIT_CONFIG_GLOBAL=/x/gitconfig"}
+	want := []string{"HOME=/Users/bmf", "GIT_EXEC_PATH=/opt/git/libexec", "GIT_TRACE=1", "GIT_CONFIG_GLOBAL=/x/gitconfig",
+		"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=safe.directory", "GIT_CONFIG_VALUE_0=*"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Errorf("kept %v, want %v", got, want)
 	}
@@ -167,37 +169,54 @@ func TestDiskNamesTheMainTree(t *testing.T) {
 	run(main, "init", "-q")
 	run(main, "commit", "-q", "--allow-empty", "-m", "First commit")
 	run(main, "worktree", "add", "-q", linked, "-b", "linked")
-	// A submodule keeps its git directory under the superproject's, and git
-	// lists that directory as its main worktree.
+	// A submodule keeps its git directory under the superproject's.
 	sub := filepath.Join(base, "sub")
 	run(base, "init", "-q", "sub")
 	run(sub, "commit", "-q", "--allow-empty", "-m", "Submodule")
 	run(main, "-c", "protocol.file.allow=always", "submodule", "add", "-q", "../sub", "vendor/sub")
 
-	var d Disk
-	// git reports the path it resolved, which on macOS is not the symlinked
-	// spelling the temp directory was handed out under.
-	want := d.MainTree(main)
-	if want == "" {
-		t.Fatal("the checkout itself has no main tree")
-	}
-	for _, dir := range []string{filepath.Join(main, "sub", "deep"), linked} {
-		if got := d.MainTree(dir); got != want {
-			t.Errorf("MainTree(%q) = %q, want %q", dir, got, want)
-		}
-	}
 	// A bare repository lists itself first; its first checkout is the tree.
 	bare := filepath.Join(base, "bare.git")
 	bareTree := filepath.Join(base, "bare-checkout")
 	run(base, "clone", "-q", "--bare", main, bare)
 	run(bare, "worktree", "add", "-q", bareTree, "-b", "checkout")
-	if got := d.MainTree(bareTree); got == "" || strings.HasSuffix(got, ".git") {
-		t.Errorf("MainTree of a bare repository's checkout = %q, want the checkout", got)
+
+	// A submodule's own linked worktree, which git lists after the submodule's
+	// git directory.
+	subLinked := filepath.Join(base, "sub-linked")
+	run(filepath.Join(main, "vendor", "sub"), "worktree", "add", "-q", subLinked, "-b", "sub-linked")
+
+	// The checkout reached through a symlink, the way /tmp is /private/tmp.
+	alias := filepath.Join(base, "alias")
+	if err := os.Symlink(main, alias); err != nil {
+		t.Fatal(err)
 	}
 
-	subTree := d.MainTree(filepath.Join(main, "vendor", "sub"))
-	if subTree == "" || strings.Contains(subTree, ".git") || !strings.HasSuffix(subTree, filepath.Join("vendor", "sub")) {
-		t.Errorf("MainTree of a submodule = %q, want its own checkout", subTree)
+	// git answers with symlinks resolved, and the temporary directory on macOS
+	// sits behind one. Where the directory asked about is not inside the tree,
+	// that resolved spelling is the only one there is.
+	resolved := func(p string) string {
+		t.Helper()
+		r, err := filepath.EvalSymlinks(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+
+	var d Disk
+	for _, c := range []struct{ dir, want string }{
+		{main, main},
+		{filepath.Join(main, "sub", "deep"), main},
+		{filepath.Join(alias, "sub", "deep"), alias},
+		{linked, resolved(main)},
+		{bareTree, bareTree},
+		{filepath.Join(main, "vendor", "sub"), filepath.Join(main, "vendor", "sub")},
+		{subLinked, resolved(filepath.Join(main, "vendor", "sub"))},
+	} {
+		if got := d.MainTree(c.dir); got != c.want {
+			t.Errorf("MainTree(%q) = %q, want %q", c.dir, got, c.want)
+		}
 	}
 	if got := d.MainTree(base); got != "" {
 		t.Errorf("MainTree of a directory outside any repository = %q, want none", got)

@@ -143,7 +143,7 @@ func run(dir string, args ...string) (string, error) {
 // withoutGitEnv drops every variable that would point git somewhere other
 // than the directory it is run in: a repository, a work tree, an object store,
 // a ceiling on discovery. What stays is what a local read needs to run at all,
-// which is where git is installed and how it finds its configuration.
+// which is where git is installed and its configuration.
 func withoutGitEnv(env []string) []string {
 	kept := env[:0:0]
 	for _, kv := range env {
@@ -156,12 +156,19 @@ func withoutGitEnv(env []string) []string {
 	return kept
 }
 
+// gitEnvKept is what stays. Configuration passed in the environment stays with
+// it: a container or CI job commonly grants safe.directory that way, and
+// without it git refuses a checkout owned by someone else and every read here
+// comes back empty.
 func gitEnvKept(name string) bool {
 	switch name {
-	case "GIT_EXEC_PATH", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM":
+	case "GIT_EXEC_PATH", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM",
+		"GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT":
 		return true
 	}
-	return strings.HasPrefix(name, "GIT_TRACE")
+	return strings.HasPrefix(name, "GIT_TRACE") ||
+		strings.HasPrefix(name, "GIT_CONFIG_KEY_") ||
+		strings.HasPrefix(name, "GIT_CONFIG_VALUE_")
 }
 
 func atoi(s string) int {
