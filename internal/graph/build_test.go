@@ -533,3 +533,24 @@ func TestTotalsMeasureOverlappingSittingsInTimeOrder(t *testing.T) {
 		t.Errorf("active minutes = %d, want the 40 from the first prompt to the last", got)
 	}
 }
+
+// A sub-agent's commit moved relative to the directory its own session ran in,
+// which is judged before its work is folded into the turn that delegated it.
+func TestADelegatedCommitIsJudgedFromItsOwnDirectory(t *testing.T) {
+	const tree = "/work/app/.claude/worktrees/calm-river"
+	p := family.Project{Path: "/work/app", Members: []agent.Project{{Path: "/work/app"}, {Path: tree}}}
+	parent := turn(1, 0, longRequest)
+	child := turn(1, 1, "")
+	child.TaskName = "commit it"
+	child.Committed = []agent.Commit{{Kind: "committed", Dir: "../../..", At: child.At}}
+	opt := DefaultOptions(made)
+	opt.Now = fixedNow
+
+	g := Build(p, []agent.Session{
+		{ID: "parent", Dir: "/work/app", Turns: []agent.Turn{parent}},
+		{ID: "child", ParentID: "parent", Dir: tree, Turns: []agent.Turn{child}},
+	}, opt)
+	if n := len(g.Totals.Commits); n != 1 {
+		t.Errorf("%d commits, want the sub-agent's commit in the main checkout", n)
+	}
+}

@@ -262,8 +262,8 @@ func TestDiskNamesTheMainTree(t *testing.T) {
 }
 
 // A project read whole spans a checkout and its linked worktrees, each on a
-// branch of its own. Every one's commits are there, each once, and a directory
-// that is gone takes nothing away.
+// branch of its own. Every one's commits are there, each once, and neither a
+// directory that is gone nor a repository of another's adds anything.
 func TestReadAllGathersEveryCheckoutsCommits(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not installed")
@@ -290,7 +290,26 @@ func TestReadAllGathersEveryCheckoutsCommits(t *testing.T) {
 	run(main, "commit", "-q", "--allow-empty", "-m", "On main")
 	run(linked, "commit", "-q", "--allow-empty", "-m", "On the worktree")
 
-	got := ReadAll([]string{main, linked, main, filepath.Join(base, "gone")})
+	// A throwaway repository a scratchpad made is among the project's
+	// directories, and is not its repository.
+	throwaway := filepath.Join(base, "scratchpad")
+	if err := os.MkdirAll(throwaway, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run(throwaway, "init", "-q")
+	run(throwaway, "commit", "-q", "--allow-empty", "-m", "Throwaway")
+
+	var d Disk
+	tree := d.MainTree(main)
+	dirs := d.Checkouts(tree, []string{tree, linked, throwaway, filepath.Join(base, "gone"), main})
+	if len(dirs) != 3 {
+		t.Errorf("checkouts = %q, want the main tree, the worktree and the main tree again", dirs)
+	}
+	if got := d.Checkouts("", []string{throwaway}); len(got) != 0 {
+		t.Errorf("a project in no repository has checkouts %q", got)
+	}
+
+	got := ReadAll(dirs)
 	if !got.Read {
 		t.Fatal("the history says it was not read")
 	}

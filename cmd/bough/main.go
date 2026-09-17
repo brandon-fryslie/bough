@@ -149,7 +149,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 	// anything is shown, so the listing, the chooser and a name all speak of
 	// the same projects.
 	made := everyAgentsRecord()
-	families := resolver(projects, made, *noRepo)
+	disk := &repo.Disk{}
+	families := resolver(projects, made, disk, *noRepo)
 	whole := families.Projects()
 
 	if *list {
@@ -176,7 +177,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("no readable history for %s", target.Name())
 	}
 
-	g := graph.Build(target, sessions, options(made, target, *noRepo))
+	g := graph.Build(target, sessions, options(made, disk, target, *noRepo))
 
 	w := stdout
 	if *out != "" {
@@ -214,11 +215,11 @@ func everyAgentsRecord() []agent.MadeFor {
 
 // resolver decides which directories are one project. Under --no-repo git is
 // never asked, so only what the agents recorded joins directories.
-func resolver(projects []agent.Project, made []agent.MadeFor, noRepo bool) *family.Resolver {
+func resolver(projects []agent.Project, made []agent.MadeFor, disk *repo.Disk, noRepo bool) *family.Resolver {
 	if noRepo {
 		return family.WithoutRepository(projects, made)
 	}
-	return family.New(projects, made, &repo.Disk{})
+	return family.New(projects, made, disk)
 }
 
 // read gathers the sessions of every directory in a project. A directory that
@@ -244,8 +245,10 @@ func read(src agent.Source, p family.Project) ([]agent.Session, error) {
 // Reading git happens here, at the edge, rather than inside the graph.
 // Building a graph is arithmetic over sessions; shelling out is not, and a
 // package that does both cannot be tested without a filesystem. Every
-// directory is read, since each worktree has a branch of its own.
-func options(made []agent.MadeFor, p family.Project, noRepo bool) graph.Options {
+// checkout of the project's repository among its directories is read, since
+// each worktree has a branch of its own. A project in no repository has none,
+// and nothing is read, as before.
+func options(made []agent.MadeFor, disk *repo.Disk, p family.Project, noRepo bool) graph.Options {
 	opt := graph.DefaultOptions(made)
 	opt.Tool = released()
 	if !noRepo {
@@ -254,7 +257,7 @@ func options(made []agent.MadeFor, p family.Project, noRepo bool) graph.Options 
 		for _, m := range p.Members {
 			dirs = append(dirs, m.Path)
 		}
-		opt.Repo = repo.ReadAll(dirs)
+		opt.Repo = repo.ReadAll(disk.Checkouts(p.Path, dirs))
 	}
 	return opt
 }
@@ -514,12 +517,14 @@ func writeList(w io.Writer, sources map[string]agent.Source, projects []family.P
 		r := row{name: p.Name(), agent: "[" + registry.Display(p.Agent) + "]", path: p.Path}
 		for _, m := range p.Members {
 			sessions, err := sources[m.Source].Sessions(m)
-			d := dir{path: m.Path, count: tally{unread: err != nil}}
+			d := dir{path: m.Path, count: tally{dirs: 1}}
+			if err != nil {
+				d.count.unread = 1
+			}
 			for _, s := range sessions {
 				d.count.prompts += len(s.Turns)
 			}
-			r.count.prompts += d.count.prompts
-			r.count.unread = r.count.unread || d.count.unread
+			r.count = r.count.add(d.count)
 			r.dirs = append(r.dirs, d)
 		}
 		rows = append(rows, r)
@@ -539,7 +544,7 @@ func writeList(w io.Writer, sources map[string]agent.Source, projects []family.P
 
 	for _, r := range rows {
 		fmt.Fprintf(w, "%-*s  %-*s  %-*s  %s\n",
-			nameW, r.name, agentW, r.agent, pathW, r.path, r.count.say(len(r.dirs)))
+			nameW, r.name, agentW, r.agent, pathW, r.path, r.count.say())
 
 		// Under the project's own path, so the directories read as parts of it.
 		shown := r.dirs
@@ -547,7 +552,7 @@ func writeList(w io.Writer, sources map[string]agent.Source, projects []family.P
 			shown = nil
 		}
 		for _, d := range shown {
-			fmt.Fprintf(w, "%-*s  %-*s  %-*s  %s\n", nameW, "", agentW, "", pathW, d.path, d.count.say(1))
+			fmt.Fprintf(w, "%-*s  %-*s  %-*s  %s\n", nameW, "", agentW, "", pathW, d.path, d.count.say())
 		}
 	}
 	return nil
@@ -557,32 +562,42 @@ func writeList(w io.Writer, sources map[string]agent.Source, projects []family.P
 type tally struct {
 	prompts int
 
-	// unread means some history could not be read, which is a different
-	// thing from a project with no prompts in it. Both used to print as
-	// "0 prompts", so a permission problem or a corrupt file read as an
-	// empty project and there was nothing to say otherwise.
-	unread bool
+	// dirs is how many directories were counted.
+	dirs int
+
+	// unread is how many of them had history that could not be read, which
+	// is a different thing from having no prompts. Both used to print as
+	// "0 prompts", so a permission problem or a corrupt file read as an empty
+	// project and there was nothing to say otherwise.
+	unread int
 }
 
-// say gives the count across however many directories it was taken from, or
+func (t tally) add(o tally) tally {
+	return tally{prompts: t.prompts + o.prompts, dirs: t.dirs + o.dirs, unread: t.unread + o.unread}
+}
+
+// say gives the count, across however many directories it was taken from, or
 // says there is none to give.
 //
 // A history that failed to read says so rather than reporting a number. The
 // count came from a discarded error, so a project whose transcripts could not
 // be opened printed "0 prompts" exactly as an empty one does, and nothing said
-// which of the two it was.
-func (t tally) say(dirs int) string {
+// which of the two it was. Across several directories it says how many
+// failed, since one failure does not make the others unreadable.
+func (t tally) say() string {
 	where := ""
-	if dirs > 1 {
-		where = fmt.Sprintf(" in %d directories", dirs)
+	if t.dirs > 1 {
+		where = fmt.Sprintf(" in %d directories", t.dirs)
 	}
 	switch {
-	case t.unread && t.prompts > 0:
-		return fmt.Sprintf("%d prompts%s, some could not be read", t.prompts, where)
-	case t.unread:
-		return "could not be read" + where
+	case t.unread == 0:
+		return fmt.Sprintf("%d prompts%s", t.prompts, where)
+	case t.dirs == 1 && t.prompts == 0:
+		return "could not be read"
+	case t.dirs == 1:
+		return fmt.Sprintf("%d prompts, some could not be read", t.prompts)
 	}
-	return fmt.Sprintf("%d prompts%s", t.prompts, where)
+	return fmt.Sprintf("%d prompts%s, %d of them with history that could not be read", t.prompts, where, t.unread)
 }
 
 const usage = `bough shows the shape of the work in a project's AI coding history.

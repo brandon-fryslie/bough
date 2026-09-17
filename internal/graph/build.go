@@ -89,15 +89,18 @@ func Build(p family.Project, sessions []agent.Session, opt Options) Graph {
 	// nothing else could reuse them afterwards.
 	sessions = clone(sessions)
 
+	// A commit made in another repository is not this project's work, whether
+	// or not the repository can be read, so it goes first either way. First
+	// of all, before delegated work is folded into the turn that asked for it:
+	// a sub-agent's commit moved relative to the directory its own session
+	// ran in, which may be another of the project's directories.
+	onlyHere(p, sessions)
+
 	// Delegated work belongs inside the turn that asked for it, so it is put
 	// back before anything is measured or divided. Doing it here rather than in
 	// each agent keeps the sub-agent's own session intact up to this point,
 	// which is what makes its prompts and tokens countable at all.
 	sessions = fold(sessions)
-
-	// A commit made in another repository is not this project's work, whether
-	// or not the repository can be read, so it goes first either way.
-	onlyHere(p, sessions)
 	repoRead := fromRepo(opt.Repo, sessions)
 
 	var goals []rollup.Goal
