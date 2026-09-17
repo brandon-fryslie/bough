@@ -2,6 +2,7 @@ package repo
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 )
@@ -79,9 +80,11 @@ func mainTree(dir string) string {
 	if !ok {
 		return ""
 	}
+	// git writes forward slashes on every platform, and a project's path is
+	// spelled with the host's own separator, so the answer is too.
 	top, err := run(entry, "rev-parse", "--show-toplevel")
 	if err != nil {
-		return entry
+		return filepath.Clean(entry)
 	}
-	return strings.TrimRight(top, "\n")
+	return filepath.Clean(strings.TrimRight(top, "\n"))
 }
