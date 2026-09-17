@@ -175,11 +175,14 @@ func TestDiskNamesTheMainTree(t *testing.T) {
 	run(sub, "commit", "-q", "--allow-empty", "-m", "Submodule")
 	run(main, "-c", "protocol.file.allow=always", "submodule", "add", "-q", "../sub", "vendor/sub")
 
-	// A bare repository lists itself first; its first checkout is the tree.
+	// A bare repository has no main tree, and names its family after itself
+	// however many checkouts it has and in whatever order they sort.
 	bare := filepath.Join(base, "bare.git")
-	bareTree := filepath.Join(base, "bare-checkout")
+	bareTree := filepath.Join(base, "zz-checkout")
 	run(base, "clone", "-q", "--bare", main, bare)
-	run(bare, "worktree", "add", "-q", bareTree, "-b", "checkout")
+	run(bare, "worktree", "add", "-q", bareTree, "-b", "zz")
+	laterTree := filepath.Join(base, "aa-checkout")
+	run(bare, "worktree", "add", "-q", laterTree, "-b", "aa")
 
 	// A submodule's own linked worktree, which git lists after the submodule's
 	// git directory.
@@ -210,7 +213,8 @@ func TestDiskNamesTheMainTree(t *testing.T) {
 		{filepath.Join(main, "sub", "deep"), resolved(main)},
 		{filepath.Join(alias, "sub", "deep"), resolved(main)},
 		{linked, resolved(main)},
-		{bareTree, resolved(bareTree)},
+		{bareTree, resolved(bare)},
+		{laterTree, resolved(bare)},
 		{filepath.Join(main, "vendor", "sub"), resolved(filepath.Join(main, "vendor", "sub"))},
 		{subLinked, resolved(filepath.Join(main, "vendor", "sub"))},
 	} {

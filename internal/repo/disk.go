@@ -63,15 +63,19 @@ func (d *Disk) MainTree(dir string) string {
 //
 // A checkout's own top level is that tree unless the checkout is a linked
 // worktree, which git shows by keeping its git directory apart from the common
-// one. Then the tree is the first checkout git lists. That listing names a
-// bare repository first, marked bare, and names a submodule by its git
-// directory under .git/modules, which is nobody's project: the submodule's
-// checkout is the top level its git directory is configured with.
+// one. Then the tree is the first entry git lists, which is the main tree in
+// the ordinary case and in two layouts is not a checkout at all.
 //
-// One layout has no answer. A repository whose git directory was moved out
-// with --separate-git-dir lists that directory as its main tree, and nothing
-// in it records where the checkout is, so a linked worktree of it names no
-// tree and stands alone.
+// A bare repository lists itself, marked bare. It has no main tree, and its
+// checkouts are listed by name, not by age, so naming the family after one
+// would rename it whenever a worktree was added ahead of it alphabetically.
+// The repository itself is the one name that stays put.
+//
+// A submodule lists its git directory under .git/modules, which is nobody's
+// project; the checkout is the top level that directory is configured with.
+// A repository made with --separate-git-dir lists its git directory the same
+// way and records no checkout at all, so a linked worktree of it names no tree
+// and stands alone.
 func mainTree(dir string) string {
 	out, err := run(dir, "rev-parse", "--show-toplevel", "--git-dir", "--git-common-dir")
 	if err != nil {
@@ -91,22 +95,21 @@ func mainTree(dir string) string {
 	if err != nil {
 		return ""
 	}
-	for _, stanza := range strings.Split(out, "\n\n") {
-		lines := strings.Split(stanza, "\n")
-		if slices.Contains(lines, "bare") {
-			continue
-		}
-		tree, _ := strings.CutPrefix(lines[0], "worktree ")
-		if resolved(dir, tree) != common {
-			return tree
-		}
+	main, _, _ := strings.Cut(out, "\n\n")
+	entry := strings.Split(main, "\n")
+	tree, _ := strings.CutPrefix(entry[0], "worktree ")
+	switch {
+	case slices.Contains(entry, "bare"):
+		return common
+	case resolved(dir, tree) == common:
 		out, err := run(common, "rev-parse", "--show-toplevel")
 		if err != nil {
 			return ""
 		}
 		return strings.TrimRight(out, "\n")
+	default:
+		return tree
 	}
-	return ""
 }
 
 // resolved is p, taken relative to dir, with every symlink resolved, so two
