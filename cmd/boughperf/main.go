@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -239,8 +240,12 @@ func pickBrowsers(names string) (func(io.Writer) ([]webdriver.Browser, error), e
 	if names == "" {
 		return installed, nil
 	}
+	listed, err := split(names)
+	if err != nil {
+		return nil, err
+	}
 	var out []webdriver.Browser
-	for _, name := range split(names) {
+	for _, name := range listed {
 		b, err := webdriver.Named(name)
 		if err != nil {
 			return nil, err
@@ -275,8 +280,12 @@ func pickScenarios(names string) ([]scenario.Scenario, error) {
 	if names == "" {
 		return scenario.All, nil
 	}
+	listed, err := split(names)
+	if err != nil {
+		return nil, err
+	}
 	var out []scenario.Scenario
-	for _, name := range split(names) {
+	for _, name := range listed {
 		sc, err := scenario.Named(name)
 		if err != nil {
 			return nil, err
@@ -286,8 +295,23 @@ func pickScenarios(names string) ([]scenario.Scenario, error) {
 	return out, nil
 }
 
-func split(list string) []string {
-	return strings.FieldsFunc(list, func(r rune) bool { return r == ',' || r == ' ' })
+// split is the names in a comma separated list, each named once.
+func split(list string) ([]string, error) {
+	names := strings.FieldsFunc(list, func(r rune) bool { return r == ',' || r == ' ' })
+	return names, once(names)
+}
+
+// once refuses a name given twice. A browser or scenario played twice under
+// one name is kept twice, and a comparison could only ever find the first.
+//
+// [LAW:single-enforcer] flags and kept files are both held to it here.
+func once(names []string) error {
+	for i, name := range names {
+		if slices.Contains(names[:i], name) {
+			return fmt.Errorf("%s is named twice", name)
+		}
+	}
+	return nil
 }
 
 // revision is the commit the working tree is at, and dirty when anything in

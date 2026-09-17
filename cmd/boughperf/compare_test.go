@@ -130,6 +130,13 @@ func TestAChangeCountsOnlyBeyondTheNoise(t *testing.T) {
 			map[string]verdict{"median": tooFewRuns, "worst": tooFewRuns, "missed": tooFewRuns},
 		},
 		{
+			// Fewer runs on one side are made up for by more on the other.
+			"four runs before, six after",
+			runs(t, 100, 105, 110, 115),
+			runs(t, 0, 1, 2, 3, 4, 5),
+			map[string]verdict{"worst": better, "missed": better},
+		},
+		{
 			"failed runs are not runs",
 			append(runs(t, 100, 105, 110, 115), take{err: errors.New("did not take")}),
 			runs(t, 0, 1, 2, 3, 4),
@@ -264,10 +271,18 @@ func TestKeptResultsReadBack(t *testing.T) {
 		"a run both recorded and failed":    `{"graph":{"name":"g","sha256":"abc"},"browsers":[{"browser":"x","version":"1","scenarios":[{"scenario":"s","runs":[{"failed":"z","recording":` + string(recording) + `}]}]}]}`,
 		"a run neither":                     `{"graph":{"name":"g","sha256":"abc"},"browsers":[{"browser":"x","version":"1","scenarios":[{"scenario":"s","runs":[{}]}]}]}`,
 		"no graph fingerprint":              `{"graph":{"name":"g"},"browsers":[]}`,
+		"a browser kept twice":              `{"graph":{"name":"g","sha256":"abc"},"browsers":[{"browser":"x","skipped":"y"},{"browser":"x","failed":"z"}]}`,
+		"a scenario kept twice":             `{"graph":{"name":"g","sha256":"abc"},"browsers":[{"browser":"x","version":"1","scenarios":[{"scenario":"s","runs":[]},{"scenario":"s","runs":[]}]}]}`,
 	} {
 		if err := json.Unmarshal([]byte(raw), &results{}); err == nil {
 			t.Errorf("%s: read", name)
 		}
+	}
+
+	// Results kept before graphs were fingerprinted are refused for that, not
+	// for the bare string they named the graph with.
+	if err := json.Unmarshal([]byte(`{"graph":"synthetic small","browsers":[]}`), &results{}); err == nil || !strings.Contains(err.Error(), "do not fingerprint") {
+		t.Errorf("read results kept before fingerprints with %v, want them refused for lacking one", err)
 	}
 }
 

@@ -51,25 +51,35 @@ func (r *results) UnmarshalJSON(raw []byte) error {
 	var kept struct {
 		Started  time.Time         `json:"started"`
 		Revision string            `json:"revision"`
-		Graph    measuredGraph     `json:"graph"`
+		Graph    json.RawMessage   `json:"graph"`
 		Repeats  int               `json:"repeats"`
 		Browsers []json.RawMessage `json:"browsers"`
 	}
 	if err := json.Unmarshal(raw, &kept); err != nil {
 		return err
 	}
-	if kept.Graph.SHA256 == "" {
+	// Results kept before graphs were fingerprinted name the graph with a bare
+	// string, and are refused for what they lack rather than for their shape.
+	var g measuredGraph
+	if err := json.Unmarshal(kept.Graph, &g); err != nil || g.SHA256 == "" {
 		return errors.New("the results do not fingerprint the graph they measured, so nothing can be compared with them")
 	}
 	browsers := make([]browser, len(kept.Browsers))
+	names := make([]string, len(kept.Browsers))
 	for i, b := range kept.Browsers {
 		read, err := readBrowser(b)
 		if err != nil {
 			return fmt.Errorf("browser %d: %w", i, err)
 		}
-		browsers[i] = read
+		if err := once(read.scenarios()); err != nil {
+			return fmt.Errorf("%s: %w", read.name(), err)
+		}
+		browsers[i], names[i] = read, read.name()
 	}
-	*r = results{Started: kept.Started, Revision: kept.Revision, Graph: kept.Graph, Repeats: kept.Repeats, Browsers: browsers}
+	if err := once(names); err != nil {
+		return err
+	}
+	*r = results{Started: kept.Started, Revision: kept.Revision, Graph: g, Repeats: kept.Repeats, Browsers: browsers}
 	return nil
 }
 

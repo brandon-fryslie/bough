@@ -21,8 +21,9 @@ Compares two kept runs of the same graph, scenario by scenario in each
 browser. Each metric is shown as the middle of its runs with the least and
 most any run reached. A change counts only when every run after is past every
 run before, which noise alone does less than once in a hundred comparisons
-(so at least five runs a side), and when it moves the middle by more than
-half a frame for a time, since frame times jitter by less than that.
+(so five runs a side, or more on one side for fewer on the other), and when
+it moves the middle by more than half a frame for a time, since frame times
+jitter by less than that.
 
 Exit status is 0 when the runs were compared, 1 when a file cannot be read or
 the runs measured different graphs, and 2 when the arguments are wrong.

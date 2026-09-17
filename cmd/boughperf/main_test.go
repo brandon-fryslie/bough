@@ -57,6 +57,8 @@ func TestFlagsThatCannotBeCarriedOutAreRefused(t *testing.T) {
 		{[]string{"-browsers", "chrome", "-scenarios", "pinch"}, "drag-pan"},
 		{[]string{"-size", "small", "-graph", "g.json"}, "give one"},
 		{[]string{"-browsers", "chrome", "small"}, "unexpected"},
+		{[]string{"-browsers", "chrome,chrome"}, "chrome is named twice"},
+		{[]string{"-browsers", "chrome", "-scenarios", "drag-pan,hover-sweep,drag-pan"}, "drag-pan is named twice"},
 	} {
 		out := filepath.Join(t.TempDir(), "results.json")
 		var stderr bytes.Buffer
