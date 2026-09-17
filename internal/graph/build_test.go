@@ -3,14 +3,33 @@ package graph
 import (
 	"bytes"
 	"encoding/json"
+	"regexp"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/nickelsec/bough/internal/agent"
+	"github.com/nickelsec/bough/internal/family"
 	"github.com/nickelsec/bough/internal/repo"
 )
 
 var fixedNow = func() time.Time { return time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC) }
+
+// made is an agent's record of the worktrees it makes, written by hand:
+// <project>/.claude/worktrees/<name>. Every build here is given it, as the
+// command gives every build every agent's record.
+var made = []agent.MadeFor{func(p string) (agent.Made, bool) {
+	m := regexp.MustCompile(`^(.*)/\.claude/worktrees/[^/]+(/.*)?$`).FindStringSubmatch(p)
+	if m == nil {
+		return agent.Made{}, false
+	}
+	return agent.Made{For: func(c string) bool { return c == m[1] }, Within: m[2]}, true
+}}
+
+// alone is a project worked in the one directory it is known by.
+func alone(p agent.Project) family.Project {
+	return family.Project{Path: p.Path, Agent: p.Source, Members: []agent.Project{p}}
+}
 
 func turn(day, min int, text string, edits ...string) agent.Turn {
 	t := agent.Turn{
@@ -47,10 +66,10 @@ func sample() (agent.Project, []agent.Session) {
 
 func TestBuildProducesTheHierarchy(t *testing.T) {
 	p, sessions := sample()
-	opt := DefaultOptions()
+	opt := DefaultOptions(made)
 	opt.Now = fixedNow
 
-	g := Build(p, sessions, opt)
+	g := Build(alone(p), sessions, opt)
 
 	if g.Schema != SchemaVersion {
 		t.Errorf("schema = %d, want %d", g.Schema, SchemaVersion)
@@ -81,15 +100,15 @@ func TestBuildProducesTheHierarchy(t *testing.T) {
 // runs to see what a change actually did.
 func TestBuildIsDeterministic(t *testing.T) {
 	p, sessions := sample()
-	opt := DefaultOptions()
+	opt := DefaultOptions(made)
 	opt.Now = fixedNow
 
-	first, err := json.Marshal(Build(p, sessions, opt))
+	first, err := json.Marshal(Build(alone(p), sessions, opt))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 25; i++ {
-		again, err := json.Marshal(Build(p, sessions, opt))
+		again, err := json.Marshal(Build(alone(p), sessions, opt))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -103,10 +122,10 @@ func TestBuildIsDeterministic(t *testing.T) {
 // appears, the renderer has started bending the shape of the data.
 func TestGraphCarriesNoPresentation(t *testing.T) {
 	p, sessions := sample()
-	opt := DefaultOptions()
+	opt := DefaultOptions(made)
 	opt.Now = fixedNow
 
-	body, err := json.Marshal(Build(p, sessions, opt))
+	body, err := json.Marshal(Build(alone(p), sessions, opt))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,10 +143,10 @@ func TestGraphCarriesNoPresentation(t *testing.T) {
 // worse than no view.
 func TestBuildLosesNoTurns(t *testing.T) {
 	p, sessions := sample()
-	opt := DefaultOptions()
+	opt := DefaultOptions(made)
 	opt.Now = fixedNow
 
-	g := Build(p, sessions, opt)
+	g := Build(alone(p), sessions, opt)
 
 	counted := 0
 	for _, goal := range g.Goals {
@@ -151,9 +170,9 @@ func TestTurnTextIsNotTruncated(t *testing.T) {
 	p := agent.Project{Name: "x", Source: "claude-code"}
 	sessions := []agent.Session{{Turns: []agent.Turn{turn(1, 0, long)}}}
 
-	opt := DefaultOptions()
+	opt := DefaultOptions(made)
 	opt.Now = fixedNow
-	g := Build(p, sessions, opt)
+	g := Build(alone(p), sessions, opt)
 
 	if got := g.Goals[0].Tasks[0].Turns[0].Text; got != long {
 		t.Errorf("prompt was altered on the way out:\n got %q\nwant %q", got, long)
@@ -168,10 +187,10 @@ func TestBuildOrdersGoalsAcrossSessions(t *testing.T) {
 		{ID: "later", Turns: []agent.Turn{turn(9, 0, longRequest)}},
 		{ID: "earlier", Turns: []agent.Turn{turn(2, 0, otherRequest)}},
 	}
-	opt := DefaultOptions()
+	opt := DefaultOptions(made)
 	opt.Now = fixedNow
 
-	g := Build(p, sessions, opt)
+	g := Build(alone(p), sessions, opt)
 
 	if len(g.Goals) != 2 {
 		t.Fatalf("got %d goals, want 2", len(g.Goals))
@@ -182,9 +201,9 @@ func TestBuildOrdersGoalsAcrossSessions(t *testing.T) {
 }
 
 func TestBuildOnEmptyHistory(t *testing.T) {
-	opt := DefaultOptions()
+	opt := DefaultOptions(made)
 	opt.Now = fixedNow
-	g := Build(agent.Project{Name: "empty", Source: "claude-code"}, nil, opt)
+	g := Build(alone(agent.Project{Name: "empty", Source: "claude-code"}), nil, opt)
 
 	if len(g.Goals) != 0 || g.Totals.Turns != 0 {
 		t.Errorf("empty history should give an empty graph, got %+v", g.Totals)
@@ -214,7 +233,7 @@ func TestCommitsMadeElsewhereAreNotThisProjects(t *testing.T) {
 		{"a name that merely ends the same", "d:/my-boughs", "d:/boughs", false},
 		{"somewhere else entirely", "d:/other", "d:/project", false},
 	} {
-		if got := here(c.dir, c.project); got != c.want {
+		if got := here(c.dir, c.project, alone(agent.Project{Path: c.project})); got != c.want {
 			t.Errorf("%s: here(%q, %q) = %v, want %v", c.name, c.dir, c.project, got, c.want)
 		}
 	}
@@ -243,7 +262,7 @@ func TestCommitInASubdirectoryIsKept(t *testing.T) {
 		{"../other", false, "relative, but it climbs out of the project"},
 		{"..", false, "the parent directory is not this project"},
 	} {
-		if got := here(c.dir, proj); got != c.want {
+		if got := here(c.dir, proj, alone(agent.Project{Path: proj})); got != c.want {
 			t.Errorf("here(%q) = %v, want %v: %s", c.dir, got, c.want, c.why)
 		}
 	}
@@ -261,7 +280,7 @@ func TestCommitDirAcrossDriveSpellings(t *testing.T) {
 		{"d:/work/other", "d:/work/site", false},
 		{"internal", "d:/work/site", true},
 	} {
-		if got := here(c.dir, c.project); got != c.want {
+		if got := here(c.dir, c.project, alone(agent.Project{Path: c.project})); got != c.want {
 			t.Errorf("here(%q, %q) = %v, want %v", c.dir, c.project, got, c.want)
 		}
 	}
@@ -378,9 +397,10 @@ func TestBuildDoesNotChangeTheSessionsItIsGiven(t *testing.T) {
 	}
 
 	given := sessions()
-	opt := Options{Now: func() time.Time { return when }}
+	opt := DefaultOptions(made)
+	opt.Now = func() time.Time { return when }
 
-	first := Build(agent.Project{Name: "p", Path: "/p"}, given, opt)
+	first := Build(alone(agent.Project{Name: "p", Path: "/p"}), given, opt)
 
 	if got := len(given[0].Turns[0].Committed); got != 2 {
 		t.Errorf("the caller's commits went from 2 to %d", got)
@@ -394,11 +414,122 @@ func TestBuildDoesNotChangeTheSessionsItIsGiven(t *testing.T) {
 
 	// And the same input twice gives the same answer, which is only true if
 	// the first run left nothing behind.
-	second := Build(agent.Project{Name: "p", Path: "/p"}, given, opt)
+	second := Build(alone(agent.Project{Name: "p", Path: "/p"}), given, opt)
 	if len(first.Goals) != len(second.Goals) {
 		t.Errorf("two builds of one input: %d goals then %d", len(first.Goals), len(second.Goals))
 	}
 	if a, b := first.Totals.Commits, second.Totals.Commits; len(a) != len(b) {
 		t.Errorf("two builds of one input: %d commits then %d", len(a), len(b))
+	}
+}
+
+// A project read whole is every directory's sessions together, and the graph
+// says which directories those were.
+func TestBuildListsTheDirectoriesItRead(t *testing.T) {
+	const tree = "/work/app/.claude/worktrees/calm-river"
+	p := family.Project{Path: "/work/app", Agent: "claude-code", Members: []agent.Project{
+		{Name: "app", Path: "/work/app", Source: "claude-code"},
+		{Name: "calm-river", Path: tree, Source: "claude-code"},
+	}}
+	sessions := []agent.Session{
+		{ID: "main", Dir: "/work/app", Turns: []agent.Turn{turn(1, 0, longRequest, "/work/app/export.go")}},
+		{ID: "tree", Dir: tree, Turns: []agent.Turn{turn(2, 0, otherRequest, tree+"/search.go")}},
+	}
+	opt := DefaultOptions(made)
+	opt.Now = fixedNow
+
+	body, err := json.Marshal(Build(p, sessions, opt))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var g struct {
+		Project struct {
+			Name        string   `json:"name"`
+			Path        string   `json:"path"`
+			Directories []string `json:"directories"`
+		} `json:"project"`
+		Totals struct {
+			Turns    int `json:"turns"`
+			TopFiles []struct {
+				Path string `json:"path"`
+			} `json:"topFiles"`
+		} `json:"totals"`
+	}
+	if err := json.Unmarshal(body, &g); err != nil {
+		t.Fatal(err)
+	}
+	if g.Project.Name != "app" || g.Project.Path != "/work/app" {
+		t.Errorf("project is %q at %q, want app at /work/app", g.Project.Name, g.Project.Path)
+	}
+	if want := []string{"/work/app", tree}; !slices.Equal(g.Project.Directories, want) {
+		t.Errorf("directories = %q, want %q", g.Project.Directories, want)
+	}
+	if g.Totals.Turns != 2 {
+		t.Errorf("%d prompts, want both directories' 2", g.Totals.Turns)
+	}
+	// The worktree's code is the project's work, not the agent's bookkeeping.
+	if !slices.ContainsFunc(g.Totals.TopFiles, func(f struct {
+		Path string `json:"path"`
+	}) bool {
+		return f.Path == tree+"/search.go"
+	}) {
+		t.Errorf("the worktree's source file is not among the top files: %+v", g.Totals.TopFiles)
+	}
+}
+
+// A commit made in any of the project's directories is the project's, from
+// whichever of them the session ran in. A worktree session that runs
+// `cd <main checkout> && git commit` committed this project's work.
+func TestCommitInAnotherMemberDirectoryIsKept(t *testing.T) {
+	const tree = "/work/app/.claude/worktrees/calm-river"
+	p := family.Project{Path: "/work/app", Members: []agent.Project{{Path: "/work/app"}, {Path: tree}}}
+	for _, c := range []struct {
+		dir, from string
+		want      bool
+		why       string
+	}{
+		{"/work/app", tree, true, "the main checkout, from a worktree"},
+		{tree, "/work/app", true, "a worktree, from the main checkout"},
+		{"../../..", tree, true, "climbing from the worktree to the checkout"},
+		{"..", tree, false, "the worktrees directory is none of the project's"},
+		{"/work/site", tree, false, "another repository"},
+		{"/work/app/.claude/worktrees/other", tree, false, "a directory the project has no history in"},
+	} {
+		if got := here(c.dir, c.from, p); got != c.want {
+			t.Errorf("here(%q from %q) = %v, want %v: %s", c.dir, c.from, got, c.want, c.why)
+		}
+	}
+}
+
+// Build keeps the commit, not only here.
+func TestBuildKeepsACommitMadeInAMember(t *testing.T) {
+	const tree = "/work/app/.claude/worktrees/calm-river"
+	p := family.Project{Path: "/work/app", Members: []agent.Project{{Path: "/work/app"}, {Path: tree}}}
+	at := turn(1, 0, longRequest)
+	at.Committed = []agent.Commit{{Kind: "committed", Dir: "/work/app", At: at.At}, {Kind: "committed", Dir: "/work/site", At: at.At}}
+	opt := DefaultOptions(made)
+	opt.Now = fixedNow
+
+	g := Build(p, []agent.Session{{ID: "tree", Dir: tree, Turns: []agent.Turn{at}}}, opt)
+	if n := len(g.Totals.Commits); n != 1 {
+		t.Errorf("%d commits, want the one made in the main checkout", n)
+	}
+}
+
+// Sittings in two worktrees at once overlap, and the totals measure time in
+// the order it passed rather than the order the sittings started in.
+func TestTotalsMeasureOverlappingSittingsInTimeOrder(t *testing.T) {
+	p := family.Project{Path: "/work/app", Members: []agent.Project{{Path: "/work/app"}, {Path: "/work/app/.claude/worktrees/w"}}}
+	// One sitting from 9:00 to 9:40, another from 9:10 to 9:30.
+	sessions := []agent.Session{
+		{ID: "a", Turns: []agent.Turn{turn(1, 0, longRequest), turn(1, 20, "go on"), turn(1, 40, "and on")}},
+		{ID: "b", Turns: []agent.Turn{turn(1, 10, otherRequest), turn(1, 30, "go on")}},
+	}
+	opt := DefaultOptions(made)
+	opt.Now = fixedNow
+
+	g := Build(p, sessions, opt)
+	if got := g.Totals.ActiveMinutes; got != 40 {
+		t.Errorf("active minutes = %d, want the 40 from the first prompt to the last", got)
 	}
 }

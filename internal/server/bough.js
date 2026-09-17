@@ -1368,9 +1368,27 @@
     return String(s).replace(/([.:#[\]])/g, "\\$1");
   }
 
+  // Where the work was done: the directory the project is known by, and when
+  // its history was read from more than that one, how many and which. A
+  // project's worktrees and scratchpads are part of it, and a header naming
+  // only the checkout would say the rest of the sittings happened there.
+  function where(project) {
+    var el = document.getElementById("where");
+    var dirs = project.directories || [];
+    el.textContent = project.path;
+    if (dirs.length < 2) return;
+
+    var more = node("details", "where-dirs");
+    more.appendChild(node("summary", null, "across " + dirs.length + " directories"));
+    var list = node("ul");
+    dirs.forEach(function (d) { list.appendChild(node("li", null, d)); });
+    more.appendChild(list);
+    el.appendChild(more);
+  }
+
   function chrome() {
     document.getElementById("name").textContent = graph.project.name;
-    document.getElementById("where").textContent = graph.project.path;
+    where(graph.project);
 
     var t = graph.totals;
 

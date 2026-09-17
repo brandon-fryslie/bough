@@ -115,6 +115,7 @@ func (s Source) Sessions(p agent.Project) ([]agent.Session, error) {
 			ID:    sessionID(recs, fp),
 			Title: sessionTitle(recs),
 			Turns: turns,
+			Dir:   p.Path,
 		})
 	}
 

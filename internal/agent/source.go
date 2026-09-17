@@ -127,6 +127,11 @@ type Session struct {
 	Title string // the agent's own label for the session, when it has one
 	Turns []Turn
 
+	// Dir is the directory the session ran in, the project it was read for.
+	// A commit whose command moved somewhere relative moved from here, and a
+	// project read whole from several directories has sessions from each.
+	Dir string
+
 	// ParentID names the session that delegated this work, empty when a person
 	// started it.
 	//
@@ -189,7 +194,8 @@ type Commit struct {
 	At time.Time
 
 	// Dir is where the commit was made, when the command moved somewhere first.
-	// Empty means the project's own directory.
+	// Empty means the directory the session ran in, and a relative path is
+	// relative to it.
 	//
 	// A session about one project often commits in another, a tool and its
 	// website being worked on together for instance. Those commits are real but

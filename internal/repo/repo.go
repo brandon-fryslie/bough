@@ -80,6 +80,37 @@ func Read(dir string) History {
 	return History{Commits: parseLog(out), Read: true}
 }
 
+// ReadAll returns the commits of every directory's repository together, each
+// once, newest first.
+//
+// A project read whole spans several checkouts of one repository: the main
+// tree and each linked worktree, every one on a branch of its own. The log
+// from any one of them reaches only its own branch, so a worktree's commits
+// not yet merged are missing from the main tree's, and reading only there
+// clears every hash a worktree sitting recorded as one the repository cannot
+// reach. The history is read as it was consulted, if any directory was.
+func ReadAll(dirs []string) History {
+	var all History
+	read := map[string]bool{}
+	have := map[string]bool{}
+	for _, dir := range dirs {
+		if read[dir] {
+			continue
+		}
+		read[dir] = true
+		h := Read(dir)
+		all.Read = all.Read || h.Read
+		for _, c := range h.Commits {
+			if !have[c.SHA] {
+				have[c.SHA] = true
+				all.Commits = append(all.Commits, c)
+			}
+		}
+	}
+	sort.SliceStable(all.Commits, func(i, j int) bool { return all.Commits[i].When.After(all.Commits[j].When) })
+	return all
+}
+
 // parseLog turns git's output into commits.
 func parseLog(out string) []Commit {
 	var commits []Commit

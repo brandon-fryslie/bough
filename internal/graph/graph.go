@@ -50,9 +50,15 @@ type Graph struct {
 type Project struct {
 	Name string `json:"name"`
 
-	// Path is the working directory, recovered from the records rather than
-	// from any directory name the agent may have mangled.
+	// Path is the directory the project is known by: the main working tree
+	// of its repository, or the one directory it was worked in.
 	Path string `json:"path"`
+
+	// Directories are every directory whose history was read for this
+	// project, each a working directory recovered from the records: the
+	// checkout, its worktrees and subdirectories, scratchpads made for it,
+	// and ones since deleted. A project worked in one place has one.
+	Directories []string `json:"directories"`
 
 	// Agent names where the history came from, for example "claude-code".
 	Agent string `json:"agent"`

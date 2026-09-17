@@ -180,6 +180,7 @@ func (s Source) Sessions(p agent.Project) ([]agent.Session, error) {
 			Title:    "",
 			Turns:    turns,
 			ParentID: g.parent,
+			Dir:      p.Path,
 		})
 	}
 

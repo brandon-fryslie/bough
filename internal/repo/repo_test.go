@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -257,5 +258,48 @@ func TestDiskNamesTheMainTree(t *testing.T) {
 	}
 	if !d.Exists(linked) {
 		t.Error("the linked worktree does not exist")
+	}
+}
+
+// A project read whole spans a checkout and its linked worktrees, each on a
+// branch of its own. Every one's commits are there, each once, and a directory
+// that is gone takes nothing away.
+func TestReadAllGathersEveryCheckoutsCommits(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	base := t.TempDir()
+	main := filepath.Join(base, "main")
+	linked := filepath.Join(base, "linked")
+	if err := os.MkdirAll(main, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(withoutGitEnv(cmd.Environ()),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run(main, "init", "-q")
+	run(main, "commit", "-q", "--allow-empty", "-m", "Shared")
+	run(main, "worktree", "add", "-q", linked, "-b", "linked")
+	run(main, "commit", "-q", "--allow-empty", "-m", "On main")
+	run(linked, "commit", "-q", "--allow-empty", "-m", "On the worktree")
+
+	got := ReadAll([]string{main, linked, main, filepath.Join(base, "gone")})
+	if !got.Read {
+		t.Fatal("the history says it was not read")
+	}
+	var subjects []string
+	for _, c := range got.Commits {
+		subjects = append(subjects, c.Subject)
+	}
+	sort.Strings(subjects)
+	if want := []string{"On main", "On the worktree", "Shared"}; strings.Join(subjects, "|") != strings.Join(want, "|") {
+		t.Errorf("subjects = %q, want %q", subjects, want)
 	}
 }

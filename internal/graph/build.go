@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/nickelsec/bough/internal/agent"
+	"github.com/nickelsec/bough/internal/family"
 	"github.com/nickelsec/bough/internal/metrics"
 	"github.com/nickelsec/bough/internal/repo"
 	"github.com/nickelsec/bough/internal/rollup"
@@ -43,19 +44,28 @@ type Options struct {
 	// Ambience tells the agent's own files from the user's work. It carries
 	// what every agent reads out of the directories it makes, which only the
 	// caller can supply, since this package may not see an agent.
+	//
+	// Left empty, every edit made in a Claude Code worktree reads as the
+	// agent's own bookkeeping, which is why DefaultOptions asks for it.
 	Ambience metrics.Ambience
 
 	// Now supplies the timestamp, so tests can pin it.
 	Now func() time.Time
 }
 
-// DefaultOptions are the fitted defaults for every stage.
-func DefaultOptions() Options {
+// DefaultOptions are the fitted defaults for every stage, with every agent's
+// reading of the directories it makes.
+//
+// [LAW:types-are-the-program] The readings are a parameter rather than a field
+// to fill in afterwards: an empty Ambience is a valid value that quietly counts
+// worktree code as the agent's bookkeeping, so a caller has to say what it is.
+func DefaultOptions(made []agent.MadeFor) Options {
 	return Options{
-		Segment: segment.DefaultOptions(),
-		Rollup:  rollup.DefaultOptions(),
-		Links:   rollup.DefaultLinkOptions(),
-		Now:     time.Now,
+		Segment:  segment.DefaultOptions(),
+		Rollup:   rollup.DefaultOptions(),
+		Links:    rollup.DefaultLinkOptions(),
+		Ambience: metrics.Ambience{Made: made},
+		Now:      time.Now,
 	}
 }
 
@@ -64,8 +74,10 @@ func DefaultOptions() Options {
 // Goals from every session are gathered and ordered by when they happened, so
 // a project worked on across several sessions reads as one run of work rather
 // than as separate piles. Sessions are an artefact of how the agent stores
-// things and mean little to the person who did the work.
-func Build(p agent.Project, sessions []agent.Session, opt Options) Graph {
+// things and mean little to the person who did the work. So are the
+// directories they ran in: the sessions are those of every member of the
+// project's family, and a worktree's sittings sit among the checkout's.
+func Build(p family.Project, sessions []agent.Session, opt Options) Graph {
 	if opt.Now == nil {
 		opt.Now = time.Now
 	}
@@ -85,7 +97,7 @@ func Build(p agent.Project, sessions []agent.Session, opt Options) Graph {
 
 	// A commit made in another repository is not this project's work, whether
 	// or not the repository can be read, so it goes first either way.
-	onlyHere(p.Path, sessions)
+	onlyHere(p, sessions)
 	repoRead := fromRepo(opt.Repo, sessions)
 
 	var goals []rollup.Goal
@@ -105,11 +117,12 @@ func Build(p agent.Project, sessions []agent.Session, opt Options) Graph {
 		Generated: opt.Now().UTC(),
 		Tool:      opt.Tool,
 		Project: Project{
-			Name:     p.Name,
-			Path:     p.Path,
-			Agent:    p.Source,
-			Sessions: len(sessions),
-			RepoRead: repoRead,
+			Name:        p.Name(),
+			Path:        p.Path,
+			Directories: directories(p),
+			Agent:       p.Agent,
+			Sessions:    len(sessions),
+			RepoRead:    repoRead,
 		},
 	}
 
@@ -146,6 +159,11 @@ func Build(p agent.Project, sessions []agent.Session, opt Options) Graph {
 		})
 	}
 
+	// Goals are ordered by when they started, but two sittings in different
+	// worktrees run at once, so one goal's turns can end after the next one's
+	// begin. Measured in goal order those overlaps read as time running
+	// backwards: low-talker, read whole, came to minus 927 active minutes.
+	slices.SortStableFunc(everyTurn, func(a, b agent.Turn) int { return a.At.Compare(b.At) })
 	g.Totals = statsOf(everyTurn, opt.Ambience)
 	return g
 }
@@ -333,6 +351,16 @@ func fromRepo(h repo.History, sessions []agent.Session) bool {
 	return true
 }
 
+// directories are the member directories the project's sessions were read
+// from.
+func directories(p family.Project) []string {
+	dirs := make([]string, len(p.Members))
+	for i, m := range p.Members {
+		dirs[i] = m.Path
+	}
+	return dirs
+}
+
 // onlyHere drops commits the agent made in some other repository.
 //
 // A session about one project regularly commits in another: a tool and its
@@ -342,13 +370,16 @@ func fromRepo(h repo.History, sessions []agent.Session) bool {
 // were made in a sibling repository.
 //
 // A command that does not move is committing where the session is, which is
-// this project.
-func onlyHere(dir string, sessions []agent.Session) {
+// this project. So is one that moves into another of the family's
+// directories: a worktree session that runs `cd <main checkout> && git
+// commit` committed this project's work, which comparing against the one
+// directory the session ran in used to drop.
+func onlyHere(p family.Project, sessions []agent.Session) {
 	for _, sess := range sessions {
 		for i := range sess.Turns {
 			kept := sess.Turns[i].Committed[:0]
 			for _, c := range sess.Turns[i].Committed {
-				if here(c.Dir, dir) {
+				if here(c.Dir, sess.Dir, p) {
 					kept = append(kept, c)
 				}
 			}
@@ -357,7 +388,8 @@ func onlyHere(dir string, sessions []agent.Session) {
 	}
 }
 
-// here reports whether a commit was made in this project's own directory.
+// here reports whether a commit made in a session that ran in from was made
+// in one of this project's own directories.
 //
 // A command that does not move is running where the session is, which is here.
 //
@@ -369,8 +401,9 @@ func onlyHere(dir string, sessions []agent.Session) {
 // where it starts from.
 //
 // A path that climbs out with .. is the exception. It is relative but it can
-// leave the project, so it is resolved against the project and compared.
-func here(in, project string) bool {
+// leave the session's directory, so it is resolved against that directory and
+// compared.
+func here(in, from string, p family.Project) bool {
 	if in == "" {
 		return true
 	}
@@ -378,9 +411,9 @@ func here(in, project string) bool {
 		if !strings.Contains(in, "..") {
 			return true
 		}
-		return sameDir(path.Join(agent.NormalisePath(project), in), project)
+		return p.Holds(path.Join(agent.NormalisePath(from), in))
 	}
-	return sameDir(in, project)
+	return p.Holds(in)
 }
 
 // rooted reports whether a path says for itself where it starts.
@@ -394,18 +427,6 @@ func rooted(p string) bool {
 
 // driveLetter matches a path that opens with a Windows drive, as "d:/work".
 var driveLetter = regexp.MustCompile(`^[a-zA-Z]:/`)
-
-// sameDir compares two paths for being the same place.
-//
-// The same directory is written several ways in one session. On this corpus a
-// single project's commits arrived as "d:/thing", "/d/thing" and with no
-// path at all, which are one directory and have to compare equal or real work
-// is thrown away. The drive is folded into a leading letter so the two spellings
-// meet, and the result is compared whole rather than by suffix, since a suffix
-// test would make "site" and "my-site" the same place.
-func sameDir(a, b string) bool {
-	return agent.NormalisePath(a) == agent.NormalisePath(b)
-}
 
 // pair matches the commits an agent made to the ones in the repository,
 // closest pair first, and returns the ones nothing matched.

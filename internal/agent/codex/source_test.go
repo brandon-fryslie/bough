@@ -68,6 +68,9 @@ func TestDetectAndSessions(t *testing.T) {
 	if sessions[0].ID != "codex-sess-001" {
 		t.Errorf("expected session ID 'codex-sess-001', got %q", sessions[0].ID)
 	}
+	if sessions[0].Dir != p.Path {
+		t.Errorf("session ran in %q, want the project's %q", sessions[0].Dir, p.Path)
+	}
 	if len(sessions[0].Turns) != 1 {
 		t.Fatalf("expected 1 turn, got %d", len(sessions[0].Turns))
 	}

@@ -67,11 +67,11 @@ const (
 	// and exactly one known project is that one.
 	Recorded
 
-	// Project means the path is a project with history, and nothing joins that
+	// Itself means the path is a project with history, and nothing joins that
 	// project to anything. Its family is itself. A path that only lies inside
 	// such a project is not this: containment alone joins nothing, or every
 	// path under a home directory with history would belong to it.
-	Project
+	Itself
 )
 
 // Family is where a directory belongs.
@@ -103,6 +103,10 @@ type Resolver struct {
 
 	// known is every project with history, by the normalised form of its path.
 	known map[string]*known
+
+	// projects are the projects with history as the sources reported them,
+	// which Projects gathers into families.
+	projects []agent.Project
 }
 
 // known is one directory that has history, with whatever every source that
@@ -120,14 +124,14 @@ type known struct {
 // New resolves families among the projects with history, from each agent's
 // record of the directories it made and the repository consulted through disk.
 func New(projects []agent.Project, madeFor []agent.MadeFor, disk Disk) *Resolver {
-	return &Resolver{RepositoryConsulted: true, disk: disk, madeFor: madeFor, known: index(projects)}
+	return &Resolver{RepositoryConsulted: true, disk: disk, madeFor: madeFor, known: index(projects), projects: projects}
 }
 
 // WithoutRepository resolves families from the agents' records alone, for
 // --no-repo. A directory's own repository is never asked about, so a worktree
 // the agent did not mark as one stays its own family.
 func WithoutRepository(projects []agent.Project, madeFor []agent.MadeFor) *Resolver {
-	return &Resolver{disk: nowhere{}, madeFor: madeFor, known: index(projects)}
+	return &Resolver{disk: nowhere{}, madeFor: madeFor, known: index(projects), projects: projects}
 }
 
 // nowhere is a disk with nothing on it, which is what --no-repo means here:
@@ -199,7 +203,7 @@ func (r *Resolver) resolve(p string, followed map[string]bool) Family {
 	}
 
 	if k, ok := r.known[agent.NormalisePath(p)]; ok {
-		return Family{Name: k.path, Evidence: Project}
+		return Family{Name: k.path, Evidence: Itself}
 	}
 	return Family{Name: p, Evidence: None}
 }
@@ -282,4 +286,85 @@ func ancestors(p string) iter.Seq[string] {
 			p = parent
 		}
 	}
+}
+
+// Project is one agent's history of one family: what a person means by a
+// project. The worktrees, subdirectories and scratchpads that agent worked in
+// are its members, rather than projects of their own named after whatever
+// the agent called a worktree.
+//
+// A family two agents worked on is two projects, one per agent. Whether those
+// should be one is a separate question from whether two directories are one.
+type Project struct {
+	// Path is the directory the family is known by, as Family.Name spells it.
+	// It need not have history of its own: a repository whose every sitting
+	// ran in a worktree is still named after its main tree.
+	Path string
+
+	// Agent is the ID of the agent whose history this is.
+	Agent string
+
+	// Members are the directories this agent has history in that belong to
+	// the family, ordered by path. There is always at least one.
+	Members []agent.Project
+}
+
+// Name is what a person calls the project: the last element of its path.
+func (p Project) Name() string { return path.Base(slashed(p.Path)) }
+
+// Key identifies the project among all of them: its family and its agent.
+// Two projects with the same key are the same project, however their members
+// were spelled.
+func (p Project) Key() string { return agent.NormalisePath(p.Path) + " " + p.Agent }
+
+// Is reports whether the project is one of family f's: one agent's history
+// of it.
+func (p Project) Is(f Family) bool { return agent.NormalisePath(p.Path) == f.Key() }
+
+// Holds reports whether a directory is this project's own: the directory the
+// family is known by, or one of its members.
+//
+// Nothing is resolved here, so nothing reads the disk: a directory that is
+// neither is not this project's, even when git would say it shares the
+// repository. That keeps the question answerable where only sessions are.
+func (p Project) Holds(dir string) bool {
+	want := agent.NormalisePath(dir)
+	return want == agent.NormalisePath(p.Path) || slices.ContainsFunc(p.Members, func(m agent.Project) bool {
+		return agent.NormalisePath(m.Path) == want
+	})
+}
+
+// Projects gathers the projects the resolver was made from into one per
+// family and agent, in the order the agents first appear and then by name.
+func (r *Resolver) Projects() []Project {
+	var out []Project
+	at := map[string]int{}
+	agents := map[string]int{}
+	for _, p := range r.projects {
+		if _, ok := agents[p.Source]; !ok {
+			agents[p.Source] = len(agents)
+		}
+		// [LAW:one-source-of-truth] A member's family is what Resolve says,
+		// the same answer anything else asking about that directory gets.
+		group := Project{Path: r.Resolve(p.Path).Name, Agent: p.Source}
+		i, ok := at[group.Key()]
+		if !ok {
+			i = len(out)
+			at[group.Key()] = i
+			out = append(out, group)
+		}
+		out[i].Members = append(out[i].Members, p)
+	}
+	for i := range out {
+		slices.SortStableFunc(out[i].Members, func(a, b agent.Project) int {
+			return strings.Compare(a.Path, b.Path)
+		})
+	}
+	slices.SortStableFunc(out, func(a, b Project) int {
+		if a.Agent != b.Agent {
+			return agents[a.Agent] - agents[b.Agent]
+		}
+		return strings.Compare(a.Name(), b.Name())
+	})
+	return out
 }

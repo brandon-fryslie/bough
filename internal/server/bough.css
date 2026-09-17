@@ -221,6 +221,28 @@ body.reading #stage { right: var(--drawer); }
   color: var(--ink-low);
 }
 
+/* The directories a project was read from, folded away until asked for. The
+   mark lets clicks through to the tree, so this one part takes them back. */
+.where-dirs {
+  pointer-events: auto;
+}
+
+.where-dirs summary {
+  cursor: pointer;
+}
+
+/* On the ground colour, since the open list lies over the tree. */
+.where-dirs ul {
+  margin: 0.3rem 0 0;
+  padding: 0.3rem 0.4rem;
+  background: var(--ground);
+  border: 1px solid var(--rule);
+  list-style: none;
+  max-height: 40vh;
+  overflow-y: auto;
+  font-family: var(--mono);
+}
+
 /* ---- the figures along the foot ---------------------------------------- */
 
 .foot {
