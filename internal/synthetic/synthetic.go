@@ -60,6 +60,11 @@ const sitting = 4 * time.Hour
 // third is hard so the crooked path is drawn, and every fourth ended in a
 // commit. Task i holds i%prompts + 1 prompts, so a sitting's tasks range from
 // one prompt up to the most the shape allows.
+//
+// A sitting's prompts and commits are its tasks', since those are counts the
+// page shows side by side. Its edits are not: they grow with each sitting so
+// the day squares differ in size, which is the weighting the layout test's
+// canvases were measured against.
 func History(s Shape) graph.Graph {
 	start := time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)
 	g := graph.Graph{Schema: graph.SchemaVersion, Project: graph.Project{Name: "synthetic"}}
@@ -67,23 +72,31 @@ func History(s Shape) graph.Graph {
 	for n := 0; n < s.sittings; n++ {
 		day := start.AddDate(0, 0, n*2)
 		goal := graph.Goal{
-			ID:     "g" + strconv.Itoa(n+1),
+			ID:     goalID(n),
 			Label:  "a sitting",
 			Period: day.Format("Mon 2 Jan"),
-			Stats: graph.Stats{
-				Start: day, End: day.Add(sitting),
-				Turns: 10 * (n + 1), Edits: 12 * (n + 1),
-			},
+			Stats:  graph.Stats{Start: day, End: day.Add(sitting), Edits: 12 * (n + 1)},
 		}
 		clock := prompter{day: day, total: s.promptsPerSitting()}
 		for i := 0; i < s.tasks; i++ {
-			goal.Tasks = append(goal.Tasks, task(goal.ID, i, s.prompts, &clock))
+			t := task(n, i, s.prompts, &clock)
+			goal.Stats.Turns += t.Stats.Turns
+			goal.Stats.Commits = append(goal.Stats.Commits, t.Stats.Commits...)
+			goal.Tasks = append(goal.Tasks, t)
 		}
+		g.Totals.Turns += goal.Stats.Turns
+		g.Totals.Edits += goal.Stats.Edits
+		g.Totals.Commits = append(g.Totals.Commits, goal.Stats.Commits...)
 		g.Goals = append(g.Goals, goal)
 	}
 
 	g.Links = links(s)
 	return g
+}
+
+// goalID names sitting n. Tasks and links name sittings through it too.
+func goalID(n int) string {
+	return "g" + strconv.Itoa(n+1)
 }
 
 // promptsPerSitting is how many prompts every sitting holds in all.
@@ -105,12 +118,16 @@ type prompter struct {
 }
 
 func (c *prompter) at() time.Time {
-	t := c.day.Add(sitting * time.Duration(c.next) / time.Duration(c.total))
+	// Dividing first keeps the product inside a Duration however many prompts
+	// there are; the step stays well above a nanosecond for any sitting that
+	// could be held in memory.
+	t := c.day.Add(sitting / time.Duration(c.total) * time.Duration(c.next))
 	c.next++
 	return t
 }
 
-func task(goalID string, i, prompts int, clock *prompter) graph.Task {
+// task is the i-th task of sitting n.
+func task(n, i, prompts int, clock *prompter) graph.Task {
 	turns := make([]graph.Turn, i%prompts+1)
 	for p := range turns {
 		turns[p] = graph.Turn{At: clock.at(), Text: "a prompt"}
@@ -121,11 +138,11 @@ func task(goalID string, i, prompts int, clock *prompter) graph.Task {
 		Struggle: map[bool]float64{true: 0.7, false: 0.2}[i%3 == 0],
 	}
 	if i%4 == 3 {
-		stats.Commits = []graph.Commit{{SHA: fmt.Sprintf("%040x", i+1)}}
+		stats.Commits = []graph.Commit{{SHA: fmt.Sprintf("%020x%020x", n+1, i+1)}}
 	}
 
 	return graph.Task{
-		ID:    goalID + ".t" + strconv.Itoa(i+1),
+		ID:    goalID(n) + ".t" + strconv.Itoa(i+1),
 		Label: "a piece of work",
 		Stats: stats,
 		Turns: turns,
@@ -150,8 +167,8 @@ func links(s Shape) []graph.Link {
 	for k := range out {
 		from, to := unrank(k*step%total, s.sittings)
 		out[k] = graph.Link{
-			From:   "g" + strconv.Itoa(from+1),
-			To:     "g" + strconv.Itoa(to+1),
+			From:   goalID(from),
+			To:     goalID(to),
 			Files:  []string{"src/shared" + strconv.Itoa(k+1) + ".go"},
 			Weight: k%5 + 1,
 		}

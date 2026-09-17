@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 	"time"
+
+	"github.com/nickelsec/bough/internal/graph"
 )
 
 func mustShape(t *testing.T, sittings, tasks, prompts, links int) Shape {
@@ -75,6 +77,34 @@ func TestHistoryHasTheShapeAskedFor(t *testing.T) {
 	}
 }
 
+// The page shows a sitting's counts beside its tasks', so they have to agree,
+// and a commit counted in the totals twice would be a commit that never was.
+func TestSittingsAndTotalsAgreeWithTheirTasks(t *testing.T) {
+	g := History(mustShape(t, 3, 9, 4, 0))
+	totalTurns, shas := 0, map[string]bool{}
+	for _, goal := range g.Goals {
+		turns, commits := 0, 0
+		for _, task := range goal.Tasks {
+			turns += len(task.Turns)
+			commits += len(task.Stats.Commits)
+		}
+		if goal.Stats.Turns != turns || len(goal.Stats.Commits) != commits {
+			t.Errorf("%s counts %d prompts and %d commits; its tasks hold %d and %d",
+				goal.ID, goal.Stats.Turns, len(goal.Stats.Commits), turns, commits)
+		}
+		totalTurns += turns
+		for _, c := range goal.Stats.Commits {
+			shas[c.SHA] = true
+		}
+	}
+	if g.Totals.Turns != totalTurns {
+		t.Errorf("totals count %d prompts, the sittings %d", g.Totals.Turns, totalTurns)
+	}
+	if len(g.Totals.Commits) != len(shas) {
+		t.Errorf("totals hold %d commits but only %d distinct ones", len(g.Totals.Commits), len(shas))
+	}
+}
+
 // Every pair a shape allows can be linked, which is where a scramble that
 // collided would lose one.
 func TestEveryPairCanBeLinked(t *testing.T) {
@@ -116,8 +146,18 @@ func number(id string) int {
 
 // A prompt shown at a time outside its sitting contradicts the page it is
 // shown on, which a busy shape used to do once a sitting passed 24 tasks.
+//
+// The second shape holds over 640 thousand prompts in one sitting, past which
+// multiplying the sitting's length before dividing overflowed a Duration and
+// sent the later prompts back before the sitting began.
 func TestPromptsFallInsideTheirSittingInOrder(t *testing.T) {
-	g := History(mustShape(t, 2, 40, 15, 0))
+	for _, s := range []Shape{mustShape(t, 2, 40, 15, 0), mustShape(t, 1, 1200, 1200, 0)} {
+		promptsInOrder(t, History(s))
+	}
+}
+
+func promptsInOrder(t *testing.T, g graph.Graph) {
+	t.Helper()
 	for _, goal := range g.Goals {
 		var last time.Time
 		for _, task := range goal.Tasks {
