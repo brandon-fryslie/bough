@@ -9,7 +9,6 @@ package synthetic
 
 import (
 	"fmt"
-	"sort"
 	"strconv"
 	"time"
 
@@ -52,6 +51,9 @@ func pairs(sittings int) int {
 	return sittings * (sittings - 1) / 2
 }
 
+// sitting is how long every sitting lasts. Its prompts are spread across it.
+const sitting = 4 * time.Hour
+
 // History builds the graph a Shape describes.
 //
 // Sittings fall two days apart. Tasks within a sitting grow in weight, every
@@ -69,12 +71,13 @@ func History(s Shape) graph.Graph {
 			Label:  "a sitting",
 			Period: day.Format("Mon 2 Jan"),
 			Stats: graph.Stats{
-				Start: day, End: day.Add(4 * time.Hour),
+				Start: day, End: day.Add(sitting),
 				Turns: 10 * (n + 1), Edits: 12 * (n + 1),
 			},
 		}
+		clock := prompter{day: day, total: s.promptsPerSitting()}
 		for i := 0; i < s.tasks; i++ {
-			goal.Tasks = append(goal.Tasks, task(goal.ID, day, i, s.prompts))
+			goal.Tasks = append(goal.Tasks, task(goal.ID, i, s.prompts, &clock))
 		}
 		g.Goals = append(g.Goals, goal)
 	}
@@ -83,10 +86,34 @@ func History(s Shape) graph.Graph {
 	return g
 }
 
-func task(goalID string, day time.Time, i, prompts int) graph.Task {
+// promptsPerSitting is how many prompts every sitting holds in all.
+func (s Shape) promptsPerSitting() int {
+	total := 0
+	for i := 0; i < s.tasks; i++ {
+		total += i%s.prompts + 1
+	}
+	return total
+}
+
+// prompter hands out a sitting's prompt times in order, evenly spaced from its
+// start to just before its end, so no prompt lands outside the sitting it
+// belongs to however many the sitting holds.
+type prompter struct {
+	day   time.Time
+	total int
+	next  int
+}
+
+func (c *prompter) at() time.Time {
+	t := c.day.Add(sitting * time.Duration(c.next) / time.Duration(c.total))
+	c.next++
+	return t
+}
+
+func task(goalID string, i, prompts int, clock *prompter) graph.Task {
 	turns := make([]graph.Turn, i%prompts+1)
 	for p := range turns {
-		turns[p] = graph.Turn{At: day.Add(time.Duration(i*10+p) * time.Minute), Text: "a prompt"}
+		turns[p] = graph.Turn{At: clock.at(), Text: "a prompt"}
 	}
 
 	stats := graph.Stats{
@@ -109,32 +136,51 @@ func task(goalID string, day time.Time, i, prompts int) graph.Task {
 //
 // Taking pairs in order would hang every link off the first sitting, while a
 // real project comes back to a file after a day and after a month alike. So
-// the pairs are taken in a fixed scramble: each pair's position is multiplied
-// by an odd constant modulo 2^64, which reorders the positions without two
-// ever landing on the same key.
+// the pairs are numbered in order, the first sitting's first, and link k takes
+// pair k*step modulo the number of pairs. A step sharing no factor with that
+// number never takes one pair twice, and a step near five eighths of it puts
+// each link far from the one before, mixing short spans with long ones.
+//
+// Nothing is built for the pairs no link takes, so the cost follows the links
+// asked for rather than the square of the sittings.
 func links(s Shape) []graph.Link {
-	type pair struct {
-		from, to int
-		key      uint64
-	}
-	all := make([]pair, 0, pairs(s.sittings))
-	var position uint64
-	for from := 0; from < s.sittings; from++ {
-		for to := from + 1; to < s.sittings; to++ {
-			all = append(all, pair{from: from, to: to, key: position * 0x9E3779B97F4A7C15})
-			position++
-		}
-	}
-	sort.Slice(all, func(a, b int) bool { return all[a].key < all[b].key })
-
 	out := make([]graph.Link, s.links)
-	for k, p := range all[:s.links] {
+	total := pairs(s.sittings)
+	step := scatter(total)
+	for k := range out {
+		from, to := unrank(k*step%total, s.sittings)
 		out[k] = graph.Link{
-			From:   "g" + strconv.Itoa(p.from+1),
-			To:     "g" + strconv.Itoa(p.to+1),
+			From:   "g" + strconv.Itoa(from+1),
+			To:     "g" + strconv.Itoa(to+1),
 			Files:  []string{"src/shared" + strconv.Itoa(k+1) + ".go"},
 			Weight: k%5 + 1,
 		}
 	}
 	return out
+}
+
+// scatter is the step links take through the pairs: the first whole number
+// from five eighths of total upward that shares no factor with it.
+func scatter(total int) int {
+	step := max(total*5/8, 1)
+	for gcd(step, total) != 1 {
+		step++
+	}
+	return step
+}
+
+func gcd(a, b int) int {
+	for b != 0 {
+		a, b = b, a%b
+	}
+	return a
+}
+
+// unrank turns a pair's number back into its two sittings, stepping past the
+// pairs each earlier sitting starts.
+func unrank(index, sittings int) (from, to int) {
+	for from = 0; index >= sittings-1-from; from++ {
+		index -= sittings - 1 - from
+	}
+	return from, from + 1 + index
 }

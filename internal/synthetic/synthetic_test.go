@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 func mustShape(t *testing.T, sittings, tasks, prompts, links int) Shape {
@@ -111,6 +112,37 @@ func number(id string) int {
 		n = n*10 + int(c-'0')
 	}
 	return n
+}
+
+// A prompt shown at a time outside its sitting contradicts the page it is
+// shown on, which a busy shape used to do once a sitting passed 24 tasks.
+func TestPromptsFallInsideTheirSittingInOrder(t *testing.T) {
+	g := History(mustShape(t, 2, 40, 15, 0))
+	for _, goal := range g.Goals {
+		var last time.Time
+		for _, task := range goal.Tasks {
+			for _, turn := range task.Turns {
+				if turn.At.Before(goal.Stats.Start) || !turn.At.Before(goal.Stats.End) {
+					t.Fatalf("%s has a prompt at %s, outside %s to %s",
+						task.ID, turn.At, goal.Stats.Start, goal.Stats.End)
+				}
+				if !turn.At.After(last) {
+					t.Fatalf("%s has a prompt at %s, not after the one before at %s", task.ID, turn.At, last)
+				}
+				last = turn.At
+			}
+		}
+	}
+}
+
+// The pairs no link takes are never built, so a long history asking for a few
+// links costs what those links cost. Building every pair of twenty thousand
+// sittings first would take hundreds of millions of them.
+func TestFewLinksOnALongHistoryStayCheap(t *testing.T) {
+	g := History(mustShape(t, 20000, 1, 1, 50))
+	if len(g.Links) != 50 {
+		t.Errorf("%d links, want 50", len(g.Links))
+	}
 }
 
 func TestTheZeroShapeIsTheEmptyHistory(t *testing.T) {
