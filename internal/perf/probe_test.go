@@ -43,6 +43,15 @@ func TestProbeRecordsWhatParses(t *testing.T) {
 		t.Fatalf("reading the stand-in page's output: %v\n%s", err, out)
 	}
 
+	// A probe that kept listening or kept asking for frames would go on
+	// costing the page it measured after the measurement ended.
+	if run.Listening != 0 {
+		t.Errorf("%d input listeners left on the page", run.Listening)
+	}
+	if run.Pending != 0 {
+		t.Errorf("%d frame requests left after finishing", run.Pending)
+	}
+
 	r, err := ParseRecording(run.Recording)
 	if err != nil {
 		t.Fatalf("the probe's recording did not parse: %v\n%s", err, run.Recording)
@@ -56,15 +65,6 @@ func TestProbeRecordsWhatParses(t *testing.T) {
 	// both, and those 300ms are 18 frames missed.
 	if s.Missed != 18 || s.Frames != 13 {
 		t.Errorf("%d frames with %d missed, want 13 with 18", s.Frames, s.Missed)
-	}
-
-	// A probe that kept listening or kept asking for frames would go on
-	// costing the page it measured after the measurement ended.
-	if run.Listening != 0 {
-		t.Errorf("%d input listeners left on the page", run.Listening)
-	}
-	if run.Pending != 0 {
-		t.Errorf("%d frame requests left after finishing", run.Pending)
 	}
 }
 
@@ -93,6 +93,11 @@ function input(name, after = 3) {
   (listeners[name] || []).forEach((fn) => fn({ timeStamp: now + after }));
 }
 
+// A recording abandoned partway, as a driver that gave up on a scenario would
+// leave one, has to stop when the next starts.
+window.__boughProbe.start(Number(process.argv[3]), () => {});
+for (let i = 0; i < 2; i++) frame();
+
 let ready = false;
 window.__boughProbe.start(Number(process.argv[3]), () => { ready = true; });
 for (let i = 0; !ready; i++) {
@@ -106,8 +111,9 @@ for (let i = 0; i < 10; i++) {
 }
 
 // Stamped later than the next frame starts, as Chrome can report a wheel it
-// dispatches at the start of a frame.
+// dispatches at the start of a frame, and followed by an event stamped earlier.
 input("keydown", 20);
+input("pointermove", 1);
 
 let recording = null;
 window.__boughProbe.finish((r) => { recording = r; });

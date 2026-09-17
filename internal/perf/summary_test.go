@@ -99,6 +99,18 @@ func TestTheLastInputIsJudgedByTheFrameThatDrewIt(t *testing.T) {
 	}
 }
 
+// Events from different sources need not arrive in the order of their times,
+// and a recording is judged by when its input happened, not how it arrived.
+func TestInputIsJudgedByItsTimesNotItsArrival(t *testing.T) {
+	stall := map[int]float64{47: 300}
+	arrived := page{interval: 16.667, frames: 60, late: stall}.with(2, 45, 35).summary(t)
+	happened := page{interval: 16.667, frames: 60, late: stall}.with(2, 35, 45).summary(t)
+
+	if arrived != happened {
+		t.Errorf("judged as it arrived %+v, as it happened %+v", arrived, happened)
+	}
+}
+
 // One frame held up for three refresh intervals is two frames the browser
 // never started.
 func TestAStalledFrameCountsWhatItMissed(t *testing.T) {
@@ -160,7 +172,6 @@ func TestParseRefusesWhatNoProbeProduces(t *testing.T) {
 		{"too few quiet frames", string(quiet.with(2, 10).raw(t))},
 		{"no frame after the last input", string(quiet.with(2, 59).raw(t))},
 		{"no frame to show the last input drawn", string(quiet.with(2, 58).raw(t))},
-		{"inputs out of order", string(quiet.with(2, 40, 35).raw(t))},
 	} {
 		if _, err := ParseRecording([]byte(c.raw)); err == nil {
 			t.Errorf("%s: accepted", c.name)

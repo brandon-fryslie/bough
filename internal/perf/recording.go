@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"time"
 )
 
@@ -25,9 +26,10 @@ var Probe string
 const Quiet = 30
 
 // Recording is what the probe saw during one scenario, checked. It is only
-// made by ParseRecording, so every Recording has frames in order, at least
-// Quiet intervals before the first input, and two frames at or after the last:
-// the one that handled it and the one whose start shows it drawn.
+// made by ParseRecording, so every Recording has frames and inputs in order of
+// their times, at least Quiet intervals before the first input, and two frames
+// at or after the last: the one that handled it and the one whose start shows
+// it drawn.
 type Recording struct {
 	frames []time.Duration
 	inputs []time.Duration
@@ -60,11 +62,9 @@ func ParseRecording(raw []byte) (Recording, error) {
 			return Recording{}, fmt.Errorf("frame %d at %v does not follow frame %d at %v", i, frames[i], i-1, frames[i-1])
 		}
 	}
-	for i := 1; i < len(inputs); i++ {
-		if inputs[i] < inputs[i-1] {
-			return Recording{}, fmt.Errorf("input %d at %v arrived before input %d at %v", i, inputs[i], i-1, inputs[i-1])
-		}
-	}
+	// A browser need not stamp events in the order it dispatches them, and
+	// only when input happened matters here.
+	slices.Sort(inputs)
 
 	if len(inputs) == 0 {
 		return Recording{}, errors.New("no input reached the page, so there is nothing to judge")
