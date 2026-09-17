@@ -53,9 +53,10 @@ type Disk interface {
 type Evidence int
 
 const (
-	// None means nothing is known about the directory. It is not inside any
-	// project with history and, if the repository was consulted, not inside
-	// a repository. The family is the directory itself.
+	// None means nothing claims the path: no agent recorded it as made for a
+	// project, it is in no repository (when the repository was consulted),
+	// and it is not itself a project with history. The family is the path
+	// itself, and it belongs to nobody else's.
 	None Evidence = iota
 
 	// Repository means the directory shares a git repository with the family, or
@@ -66,8 +67,10 @@ const (
 	// and exactly one known project is that one.
 	Recorded
 
-	// Project means the directory is, or lies inside, a project with history, and
-	// nothing joins that project to anything. Its family is itself.
+	// Project means the path is a project with history, and nothing joins that
+	// project to anything. Its family is itself. A path that only lies inside
+	// such a project is not this: containment alone joins nothing, or every
+	// path under a home directory with history would belong to it.
 	Project
 )
 
@@ -170,8 +173,7 @@ var absolute = regexp.MustCompile(`^(?:/|[A-Za-z]:/)`)
 // pair of directories each recorded as made for the other cannot chase one
 // another forever.
 func (r *Resolver) resolve(p string, followed map[string]bool) Family {
-	// Three questions, always in this order, each answered by the nearest
-	// directory that can answer it.
+	// Three questions, always in this order.
 	//
 	// The agent's record comes first. A scratchpad is where a session
 	// experiments, and nine on the history this was built against had a
@@ -196,12 +198,9 @@ func (r *Resolver) resolve(p string, followed map[string]bool) Family {
 		break
 	}
 
-	for dir := range ancestors(p) {
-		if k, ok := r.known[agent.NormalisePath(dir)]; ok {
-			return Family{Name: k.path, Evidence: Project}
-		}
+	if k, ok := r.known[agent.NormalisePath(p)]; ok {
+		return Family{Name: k.path, Evidence: Project}
 	}
-
 	return Family{Name: p, Evidence: None}
 }
 

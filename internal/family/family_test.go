@@ -190,6 +190,7 @@ var (
 		"/Users/bmf/.claude/plugins/cache/memento/memento/0.3.0/skills",
 		"/Users/bmf/.claude/plugins/cache/memento/memento/0.3.0/skills/address-pr-reviews",
 		"/Users/bmf/code/docs", "/Users/bmf/writing", "/Users/bmf/writing/docs",
+		"/Users/bmf/Downloads",
 	}
 
 	repos = map[string]string{
@@ -256,6 +257,15 @@ func TestResolve(t *testing.T) {
 		{"a path inside a repository with no history is that repository",
 			"/Users/bmf/code/deps/vendorlib/src/lib.go",
 			Family{"/Users/bmf/code/deps/vendorlib", Repository}},
+		{"containment alone does not join: a deleted directory with no history under a project with history",
+			"/Users/bmf/code/never-had-history",
+			Family{"/Users/bmf/code/never-had-history", None}},
+		{"containment alone does not join: a file with no history under the home directory",
+			"/Users/bmf/Downloads/notes.txt",
+			Family{"/Users/bmf/Downloads/notes.txt", None}},
+		{"containment alone does not join: a file inside a project that is no repository",
+			"/Users/bmf/writing/docs/draft.md",
+			Family{"/Users/bmf/writing/docs/draft.md", None}},
 		{"containment alone does not join: the home directory",
 			"/Users/bmf",
 			Family{"/Users/bmf", Project}},
@@ -333,6 +343,9 @@ func TestResolveWithoutRepository(t *testing.T) {
 		{"a subdirectory has no repository to share",
 			"/Users/bmf/code/textual-js/visual-tests",
 			Family{"/Users/bmf/code/textual-js/visual-tests", Project}},
+		{"a file in a subdirectory joins nothing by containment",
+			"/Users/bmf/code/textual-js/visual-tests/snap.png",
+			Family{"/Users/bmf/code/textual-js/visual-tests/snap.png", None}},
 		{"a linked worktree has no main tree to join",
 			"/Users/bmf/wt/low-talker-fix",
 			Family{"/Users/bmf/wt/low-talker-fix", Project}},
