@@ -13,18 +13,19 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os/exec"
-	"runtime"
 	"strings"
 	"time"
 
 	"github.com/nickelsec/bough/internal/graph"
 )
 
-// Serve renders a graph in the browser and waits until the caller stops it.
+// Serve puts a graph's page on a loopback port and waits until the caller
+// stops it.
 //
-// The address is reported through announce before the browser is opened, so a
-// terminal that cannot open one still tells the reader where to look.
+// The address goes to announce once the port is bound. What happens next is
+// the caller's business: the command prints it and opens a browser, while a
+// test or a measurement run points its own client at it. Opening the desktop
+// browser from in here made every one of those open a stray window.
 //
 // agentName is the agent that wrote the history, spelled for a person. It is
 // passed in rather than looked up so that the page takes its names from the
@@ -47,7 +48,6 @@ func Serve(ctx context.Context, g graph.Graph, agentName string, announce func(u
 	if announce != nil {
 		announce(url)
 	}
-	open(url)
 
 	srv := &http.Server{
 		Handler:           routes(page),
@@ -161,25 +161,4 @@ func readAsset(name string) (string, error) {
 	defer func() { _ = f.Close() }()
 	b, err := io.ReadAll(f)
 	return string(b), err
-}
-
-// open asks the desktop to show a page.
-//
-// Failure is ignored on purpose. Plenty of places have no browser to open, and
-// the caller has already been told the address.
-// The url is built from the address the listener bound to, so it is always
-// http://127.0.0.1 and a port the kernel chose. It carries nothing a user or
-// a transcript supplied, and it is passed as an argument rather than through
-// a shell, so there is nothing here for a subprocess to misread.
-func open(url string) {
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url) //#nosec G204
-	case "darwin":
-		cmd = exec.Command("open", url) //#nosec G204
-	default:
-		cmd = exec.Command("xdg-open", url) //#nosec G204
-	}
-	_ = cmd.Start()
 }

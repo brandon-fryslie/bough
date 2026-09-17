@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -280,14 +282,39 @@ func browse(g graph.Graph, stderr io.Writer) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
+	// The address is printed before the browser is asked for, so a terminal
+	// that cannot open one still tells the reader where to look.
 	err := server.Serve(ctx, g, registry.Display(g.Project.Agent), func(url string) {
 		fmt.Fprintf(stderr, "bough is showing %s at %s\n", g.Project.Name, url)
 		fmt.Fprintf(stderr, "press ctrl-c when you are done\n")
+		openBrowser(url)
 	})
 	if err != nil {
 		return err
 	}
 	return nil
+}
+
+// openBrowser asks the desktop to show a page.
+//
+// Failure is ignored on purpose. Plenty of places have no browser to open, and
+// the reader has already been told the address.
+//
+// The url is built from the address the listener bound to, so it is always
+// http://127.0.0.1 and a port the kernel chose. It carries nothing a user or
+// a transcript supplied, and it is passed as an argument rather than through
+// a shell, so there is nothing here for a subprocess to misread.
+func openBrowser(url string) {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url) //#nosec G204
+	case "darwin":
+		cmd = exec.Command("open", url) //#nosec G204
+	default:
+		cmd = exec.Command("xdg-open", url) //#nosec G204
+	}
+	_ = cmd.Start()
 }
 
 // splitArgs separates the project name from the flags, so either order works.
