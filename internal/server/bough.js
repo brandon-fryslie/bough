@@ -1325,6 +1325,14 @@
       refilter();
     });
 
+    // The address the page was asked for can carry a date range. It is typed
+    // into the fields and applied with the button a person would press, so a
+    // range that arrives this way is the same filter as one entered by hand.
+    // With no range both ends are empty, which is the page as it always opened.
+    var range = window.BOUGH_RANGE;
+    from.value = range.from;
+    to.value = range.to;
+    document.getElementById("f-when-go").click();
   }
 
   // switchFor wires one of the on-off controls. They are buttons rather than

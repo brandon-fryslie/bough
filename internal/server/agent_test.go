@@ -23,7 +23,7 @@ func TestThePageNamesTheAgent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(string(b), `data-agent="`+id+`">`+name+`</span>`) {
+		if !strings.Contains(string(b.with(span{})), `data-agent="`+id+`">`+name+`</span>`) {
 			t.Errorf("%s: the page does not name the agent", id)
 		}
 	}
@@ -39,7 +39,7 @@ func TestThePageNamesEveryAgentInOrder(t *testing.T) {
 	}
 	want := `id="agents"><span class="mark-agent" data-agent="claude-code">Claude Code</span>` +
 		`<span class="mark-agent" data-agent="codex">Codex</span></span>`
-	if !strings.Contains(string(b), want) {
+	if !strings.Contains(string(b.with(span{})), want) {
 		t.Errorf("the page does not name both agents in order")
 	}
 }
@@ -53,7 +53,7 @@ func TestThePageTakesAgentNamesFromGo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(b), `data-agent="p&lt;i&gt;">Pi &lt;agent&gt;</span>`) {
+	if !strings.Contains(string(b.with(span{})), `data-agent="p&lt;i&gt;">Pi &lt;agent&gt;</span>`) {
 		t.Errorf("the page did not show the name it was given, escaped")
 	}
 }

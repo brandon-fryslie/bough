@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os/exec"
@@ -51,7 +52,7 @@ func start(t *testing.T, g graph.Graph) string {
 	t.Cleanup(cancel)
 
 	urls := make(chan string, 1)
-	go Serve(ctx, g, spelled, func(u string) { urls <- u })
+	go Serve(ctx, g.Project.Path, g, nil, spelled, func(u string) { urls <- u })
 
 	select {
 	case url := <-urls:
@@ -106,6 +107,28 @@ func TestServingLaunchesNothing(t *testing.T) {
 	}
 }
 
+// Building a family's page is handed to the server by the command, so the
+// server never learns how a family is found or read. Importing either would
+// let a second way of building a graph grow in here beside the command's.
+//
+// Direct imports only: the graph this package draws is itself built on
+// families, and seeing that type is not the same as reading one.
+func TestServingReadsNoHistory(t *testing.T) {
+	out, err := exec.Command("go", "list", "-f", `{{join .Imports " "}}`, ".").Output()
+	if err != nil {
+		t.Fatalf("go list: %v", err)
+	}
+	imports := strings.Fields(string(out))
+	if len(imports) == 0 {
+		t.Fatal("go list returned no imports, so nothing was checked")
+	}
+	for _, imp := range imports {
+		if imp == "github.com/nickelsec/bough/internal/family" || strings.HasPrefix(imp, "github.com/nickelsec/bough/internal/agent") {
+			t.Errorf("the server imports %s; building a family belongs to the command", imp)
+		}
+	}
+}
+
 func TestServesThePage(t *testing.T) {
 	url := start(t, sample())
 	resp, body := get(t, url+"/")
@@ -124,19 +147,39 @@ func TestServesThePage(t *testing.T) {
 }
 
 // The page has to work with no network at all, and keep working when saved to
-// disk, so everything it needs is already inside it.
+// disk, so everything it needs is already inside it. That holds for every page
+// the server hands out: a family's drawing however it was asked for, and the
+// plain pages that say a drawing is not there.
 func TestPageFetchesNothingExternal(t *testing.T) {
-	url := start(t, sample())
-	_, body := get(t, url+"/")
+	gate := make(chan struct{})
+	families := map[string]Build{
+		"/work/second": func() (graph.Graph, error) { return second(), nil },
+		"/work/slow":   func() (graph.Graph, error) { <-gate; return second(), nil },
+		"/work/broken": func() (graph.Graph, error) { return graph.Graph{}, errors.New("no readable history for broken") },
+	}
+	base, built := site(t, sample(), families)
+	t.Cleanup(func() { close(gate) })
 
-	// The server's own address is allowed to appear, and so is the SVG
-	// namespace, which is an identifier rather than somewhere to fetch from.
-	cleaned := strings.ReplaceAll(body, url, "")
-	cleaned = strings.ReplaceAll(cleaned, "http://www.w3.org/2000/svg", "")
+	pages := map[string]string{
+		"the first page":          body(t, base+"/", http.StatusOK),
+		"a family asked for":      opened(t, base, built, "/work/second", ""),
+		"a page still building":   body(t, family(base, "/work/slow", ""), http.StatusAccepted),
+		"an unknown family":       body(t, family(base, "/work/none", ""), http.StatusNotFound),
+		"a malformed date":        body(t, base+"/?from=soon", http.StatusBadRequest),
+		"an unreadable history":   failure(t, base, built, "/work/broken"),
+		"a page opened on a date": body(t, base+"/?from=2026-08-01", http.StatusOK),
+	}
+	for what, page := range pages {
+		// The server's own address is allowed to appear, and so is the SVG
+		// namespace, which is an identifier rather than somewhere to fetch
+		// from.
+		cleaned := strings.ReplaceAll(page, base, "")
+		cleaned = strings.ReplaceAll(cleaned, "http://www.w3.org/2000/svg", "")
 
-	for _, bad := range []string{"http://", "https://", "//cdn", "googleapis", "fonts.g"} {
-		if strings.Contains(cleaned, bad) {
-			t.Errorf("the page reaches out to %q", bad)
+		for _, bad := range []string{"http://", "https://", "//cdn", "googleapis", "fonts.g"} {
+			if strings.Contains(cleaned, bad) {
+				t.Errorf("%s reaches out to %q", what, bad)
+			}
 		}
 	}
 }
@@ -148,6 +191,18 @@ func TestGraphIsInlinedAndParses(t *testing.T) {
 	url := start(t, g)
 	_, body := get(t, url+"/")
 
+	parsed := inlined(t, body)
+	if parsed.Project.Name != g.Project.Name {
+		t.Errorf("inlined project is %q, want %q", parsed.Project.Name, g.Project.Name)
+	}
+	if len(parsed.Goals) != len(g.Goals) {
+		t.Errorf("inlined %d goals, want %d", len(parsed.Goals), len(g.Goals))
+	}
+}
+
+// inlined is the graph a page carries, failing the test when there is none.
+func inlined(t *testing.T, body string) graph.Graph {
+	t.Helper()
 	const marker = "window.BOUGH = "
 	i := strings.Index(body, marker)
 	if i < 0 {
@@ -163,12 +218,7 @@ func TestGraphIsInlinedAndParses(t *testing.T) {
 	if err := json.Unmarshal([]byte(rest[:end]), &parsed); err != nil {
 		t.Fatalf("the inlined graph is not valid JSON: %v", err)
 	}
-	if parsed.Project.Name != g.Project.Name {
-		t.Errorf("inlined project is %q, want %q", parsed.Project.Name, g.Project.Name)
-	}
-	if len(parsed.Goals) != len(g.Goals) {
-		t.Errorf("inlined %d goals, want %d", len(parsed.Goals), len(g.Goals))
-	}
+	return parsed
 }
 
 func TestServesTheArtwork(t *testing.T) {
@@ -221,7 +271,7 @@ func TestShutdownIsClean(t *testing.T) {
 	urls := make(chan string, 1)
 	done := make(chan error, 1)
 
-	go func() { done <- Serve(ctx, sample(), spelled, func(u string) { urls <- u }) }()
+	go func() { done <- Serve(ctx, "/work/example", sample(), nil, spelled, func(u string) { urls <- u }) }()
 	<-urls
 	cancel()
 
@@ -240,20 +290,34 @@ func TestShutdownIsClean(t *testing.T) {
 func TestPromptsCannotBreakOutOfTheScript(t *testing.T) {
 	g := sample()
 	g.Goals[0].Tasks[0].Turns[0].Text = `look at </script><script>alert(1)</script> this`
+	// Along with the placeholder the date range goes in, which a prompt can
+	// hold as easily as any other text.
+	g.Goals[0].Tasks[0].Turns[1].Text = `{{.Range}}`
 
-	url := start(t, g)
-	_, body := get(t, url+"/")
-
-	// The dangerous sequence must not survive into the page as written.
-	if strings.Contains(body, "</script><script>alert") {
-		t.Error("a prompt closed the script element and opened another")
-	}
-	// It still has to be there, since the prompt is what the reader came to
-	// see. Go's encoder escapes the angle brackets on its way into JSON, which
-	// already neutralises this; the replacer is a second line in case that
-	// behaviour is ever turned off.
-	if !strings.Contains(body, `u003c/script`) && !strings.Contains(body, `<\/script`) {
-		t.Error("the prompt was lost rather than escaped")
+	base, built := site(t, g, map[string]Build{"/work/other": func() (graph.Graph, error) { return g, nil }})
+	for what, page := range map[string]string{
+		"the first page":     body(t, base+"/?from=2026-08-01", http.StatusOK),
+		"a family asked for": opened(t, base, built, "/work/other", "&from=2026-08-01"),
+	} {
+		// The dangerous sequence must not survive into the page as written.
+		if strings.Contains(page, "</script><script>alert") {
+			t.Errorf("%s: a prompt closed the script element and opened another", what)
+		}
+		// It still has to be there, since the prompt is what the reader came
+		// to see. Go's encoder escapes the angle brackets on its way into
+		// JSON, which already neutralises this; the replacer is a second line
+		// in case that behaviour is ever turned off.
+		if !strings.Contains(page, `u003c/script`) && !strings.Contains(page, `<\/script`) {
+			t.Errorf("%s: the prompt was lost rather than escaped", what)
+		}
+		// The prompt holding the placeholder is still that prompt, and the
+		// range went where the page reads it and nowhere else.
+		if got := inlined(t, page).Goals[0].Tasks[0].Turns[1].Text; got != `{{.Range}}` {
+			t.Errorf("%s: a prompt reading {{.Range}} came out as %q", what, got)
+		}
+		if n := strings.Count(page, `"from":"2026-08-01"`); n != 1 {
+			t.Errorf("%s: the range appears %d times, want once", what, n)
+		}
 	}
 }
 
