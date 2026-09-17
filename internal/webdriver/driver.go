@@ -170,7 +170,7 @@ func start(ctx context.Context, b Browser) (*driver, error) {
 		endpoint: endpoint{fmt.Sprintf("http://127.0.0.1:%d", port)},
 		// The driver lives until stop, not until ctx ends, so it is not tied
 		// to ctx.
-		process: exec.Command(path, b.listen(port)...), //#nosec G204 -- the path is the driver the caller chose
+		process: exec.Command(path, b.listen(port)...), //#nosec G204 G702 -- the path is the driver the caller chose
 		exited:  make(chan struct{}),
 		output:  &lockedBuffer{},
 	}

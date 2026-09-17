@@ -47,7 +47,7 @@ type Summary struct {
 // interval at rest. The quiet intervals are every one before those.
 // ParseRecording guarantees both are there.
 func Summarize(r Recording, more ...Recording) Summary {
-	var quiet, busy []time.Duration
+	var quiet, busy []time.Duration //nolint:prealloc // how many intervals the runs pool is only known once they are cut
 	var inputs int
 	var span time.Duration
 	for _, r := range append([]Recording{r}, more...) {
