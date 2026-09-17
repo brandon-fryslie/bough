@@ -22,6 +22,7 @@ func Agent() agent.Agent {
 		Name:    "Claude Code",
 		History: filepath.Join(".claude", "projects"),
 		Open:    func(root string) agent.Source { return Source{Root: root} },
+		MadeFor: serves,
 	}
 }
 

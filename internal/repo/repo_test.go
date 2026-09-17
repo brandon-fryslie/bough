@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -70,7 +71,9 @@ func TestReadAgainstARealRepository(t *testing.T) {
 	run := func(args ...string) {
 		t.Helper()
 		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-		cmd.Env = append(cmd.Environ(),
+		// Scrubbed as bough scrubs it, or a GIT_DIR exported by a hook would
+		// have these commands build the fixture inside that repository.
+		cmd.Env = append(withoutGitEnv(cmd.Environ()),
 			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com",
 			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com")
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -101,6 +104,24 @@ func TestReadAgainstARealRepository(t *testing.T) {
 	}
 }
 
+// Everything git would read from the environment about where a repository is
+// goes; what it needs to run stays.
+func TestWithoutGitEnv(t *testing.T) {
+	got := withoutGitEnv([]string{
+		"HOME=/Users/bmf", "GIT_DIR=/elsewhere/.git", "GIT_WORK_TREE=/elsewhere",
+		"GIT_CEILING_DIRECTORIES=/Users", "GIT_OBJECT_DIRECTORY=/q",
+		"GIT_EXEC_PATH=/opt/git/libexec", "GIT_TRACE=1", "GIT_CONFIG_GLOBAL=/x/gitconfig",
+		"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=safe.directory", "GIT_CONFIG_VALUE_0=*",
+		"GIT_DISCOVERY_ACROSS_FILESYSTEM=1",
+	})
+	want := []string{"HOME=/Users/bmf", "GIT_EXEC_PATH=/opt/git/libexec", "GIT_TRACE=1", "GIT_CONFIG_GLOBAL=/x/gitconfig",
+		"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=safe.directory", "GIT_CONFIG_VALUE_0=*",
+		"GIT_DISCOVERY_ACROSS_FILESYSTEM=1"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("kept %v, want %v", got, want)
+	}
+}
+
 func writeFile(dir, name, body string) error {
 	return os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600)
 }
@@ -123,5 +144,118 @@ func TestHistorySaysWhetherItWasRead(t *testing.T) {
 	// A real repository, which is the case that has to come back true.
 	if h := Read("."); !h.Read {
 		t.Skip("no git available, so there is nothing to compare against")
+	}
+}
+
+// A subdirectory and a linked worktree both name the checkout they belong to,
+// and a directory outside any repository names nothing.
+func TestDiskNamesTheMainTree(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	base := t.TempDir()
+	main := filepath.Join(base, "main")
+	linked := filepath.Join(base, "linked")
+	if err := os.MkdirAll(filepath.Join(main, "sub", "deep"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	run := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		// Scrubbed as bough scrubs it, or a GIT_DIR exported by a hook would
+		// have these commands build the fixture inside that repository.
+		cmd.Env = append(withoutGitEnv(cmd.Environ()),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run(main, "init", "-q")
+	run(main, "commit", "-q", "--allow-empty", "-m", "First commit")
+	run(main, "worktree", "add", "-q", linked, "-b", "linked")
+	// A submodule keeps its git directory under the superproject's.
+	sub := filepath.Join(base, "sub")
+	run(base, "init", "-q", "sub")
+	run(sub, "commit", "-q", "--allow-empty", "-m", "Submodule")
+	run(main, "-c", "protocol.file.allow=always", "submodule", "add", "-q", "../sub", "vendor/sub")
+
+	// A bare repository has no main tree, and names its family after itself
+	// however many checkouts it has and in whatever order they sort.
+	bare := filepath.Join(base, "bare.git")
+	bareTree := filepath.Join(base, "zz-checkout")
+	run(base, "clone", "-q", "--bare", main, bare)
+	run(bare, "worktree", "add", "-q", bareTree, "-b", "zz")
+	laterTree := filepath.Join(base, "aa-checkout")
+	run(bare, "worktree", "add", "-q", laterTree, "-b", "aa")
+
+	// A submodule's own linked worktree, which git lists after the submodule's
+	// git directory.
+	subLinked := filepath.Join(base, "sub-linked")
+	run(filepath.Join(main, "vendor", "sub"), "worktree", "add", "-q", subLinked, "-b", "sub-linked")
+
+	// A bare repository beside its checkouts, found through a .git file.
+	layout := filepath.Join(base, "layout")
+	run(base, "clone", "-q", "--bare", main, filepath.Join(layout, ".bare"))
+	if err := writeFile(layout, ".git", "gitdir: ./.bare\n"); err != nil {
+		t.Fatal(err)
+	}
+	run(filepath.Join(layout, ".bare"), "worktree", "add", "-q", filepath.Join(layout, "trunk"), "-b", "trunk")
+
+	// A repository whose git directory lives apart from its checkout.
+	separate := filepath.Join(base, "separate.git")
+	separateTree := filepath.Join(base, "separate")
+	run(base, "init", "-q", "--separate-git-dir", separate, separateTree)
+	run(separateTree, "commit", "-q", "--allow-empty", "-m", "Separate")
+	separateLinked := filepath.Join(base, "separate-linked")
+	run(separateTree, "worktree", "add", "-q", separateLinked, "-b", "separate-linked")
+
+	// The checkout reached through a symlink, the way /tmp is /private/tmp.
+	alias := filepath.Join(base, "alias")
+	if err := os.Symlink(main, alias); err != nil {
+		t.Fatal(err)
+	}
+
+	// One repository has one spelling from wherever it is asked about, the one
+	// with symlinks resolved. The temporary directory on macOS sits behind a
+	// symlink, so this is tested on every run there.
+	resolved := func(p string) string {
+		t.Helper()
+		r, err := filepath.EvalSymlinks(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+
+	var d Disk
+	for _, c := range []struct{ dir, want string }{
+		{main, resolved(main)},
+		{filepath.Join(main, "sub", "deep"), resolved(main)},
+		{filepath.Join(alias, "sub", "deep"), resolved(main)},
+		{linked, resolved(main)},
+		{bareTree, resolved(bare)},
+		{laterTree, resolved(bare)},
+		{filepath.Join(main, "vendor", "sub"), resolved(filepath.Join(main, "vendor", "sub"))},
+		{subLinked, resolved(filepath.Join(main, "vendor", "sub"))},
+		{filepath.Join(main, ".git", "hooks"), resolved(main)},
+		{layout, resolved(filepath.Join(layout, ".bare"))},
+		{filepath.Join(layout, "trunk"), resolved(filepath.Join(layout, ".bare"))},
+		{separateTree, resolved(separate)},
+		{separateLinked, resolved(separate)},
+	} {
+		if got := d.MainTree(c.dir); got != c.want {
+			t.Errorf("MainTree(%q) = %q, want %q", c.dir, got, c.want)
+		}
+	}
+	if got := d.MainTree(base); got != "" {
+		t.Errorf("MainTree of a directory outside any repository = %q, want none", got)
+	}
+	if d.Exists(filepath.Join(base, "nothing-here")) {
+		t.Error("a missing directory exists")
+	}
+	if !d.Exists(linked) {
+		t.Error("the linked worktree does not exist")
 	}
 }

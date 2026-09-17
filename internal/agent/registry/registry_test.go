@@ -15,6 +15,11 @@ func TestAgentsAreDistinct(t *testing.T) {
 				t.Errorf("%+v leaves something unnamed", a)
 			}
 		}
+		// The family resolver calls every agent's reading of the directories it
+		// made, so an agent without one would stop it for everyone.
+		if a.MadeFor == nil {
+			t.Errorf("%s has no MadeFor", a.ID)
+		}
 		for _, v := range []string{"id:" + a.ID, "flag:" + a.Flag, "name:" + a.Name} {
 			if seen[v] {
 				t.Errorf("two agents share %s", v)

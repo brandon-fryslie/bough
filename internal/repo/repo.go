@@ -16,6 +16,7 @@
 package repo
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -126,11 +127,51 @@ func run(dir string, args ...string) (string, error) {
 	//#nosec G204 // the arguments are fixed above; only the directory varies,
 	// and it comes from the transcript rather than from anything a caller typed.
 	cmd := exec.Command("git", full...)
+	// A repository named in the environment would answer for every directory
+	// asked about. Git hooks export GIT_DIR and an object store, and a
+	// bare-dotfiles alias sets GIT_DIR and GIT_WORK_TREE, so bough launched
+	// from either would read one repository's history whatever path it was
+	// handed.
+	cmd.Env = withoutGitEnv(os.Environ())
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
 	}
 	return string(out), nil
+}
+
+// withoutGitEnv drops every variable that would point git somewhere other
+// than the directory it is run in: a repository, a work tree, an object store,
+// a ceiling on discovery. What stays is what a local read needs to run at all,
+// which is where git is installed and its configuration.
+func withoutGitEnv(env []string) []string {
+	kept := env[:0:0]
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		if strings.HasPrefix(name, "GIT_") && !gitEnvKept(name) {
+			continue
+		}
+		kept = append(kept, kv)
+	}
+	return kept
+}
+
+// gitEnvKept is what stays. Configuration passed in the environment stays with
+// it: a container or CI job commonly grants safe.directory that way, and
+// without it git refuses a checkout owned by someone else and every read here
+// comes back empty.
+func gitEnvKept(name string) bool {
+	switch name {
+	case "GIT_EXEC_PATH", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM",
+		"GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
+		// Only the environment can let discovery cross a mount, which a
+		// container that mounts part of a checkout on its own needs.
+		"GIT_DISCOVERY_ACROSS_FILESYSTEM":
+		return true
+	}
+	return strings.HasPrefix(name, "GIT_TRACE") ||
+		strings.HasPrefix(name, "GIT_CONFIG_KEY_") ||
+		strings.HasPrefix(name, "GIT_CONFIG_VALUE_")
 }
 
 func atoi(s string) int {

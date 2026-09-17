@@ -25,6 +25,8 @@ func Agent() agent.Agent {
 		Name:    "Codex",
 		History: filepath.Join(".codex", "sessions"),
 		Open:    func(root string) agent.Source { return Source{Root: root} },
+		// Codex works where it is started and makes no directories of its own.
+		MadeFor: func(string) func(string) bool { return nil },
 	}
 }
 
