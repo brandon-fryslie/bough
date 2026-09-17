@@ -131,11 +131,11 @@ var All = []Scenario{
 		Took:  func(before, after View) bool { return after.Scale < before.Scale },
 	},
 	{
-		// Across the nodes left to right, each one's note shown in turn.
+		// From bare canvas across the nodes left to right, each one's note
+		// shown in turn.
 		Name: "hover-sweep",
 		Place: func(g Geometry) Gesture {
-			nodes := spread(g.Nodes, 40)
-			return Pointer{From: nodes[0], Through: nodes[1:], Every: 2 * mouse}
+			return Pointer{From: g.Empty, Through: spread(g.Nodes, 40), Every: 2 * mouse}
 		},
 		Took: func(before, after View) bool { return after.Note != "" && after.Note != before.Note },
 	},

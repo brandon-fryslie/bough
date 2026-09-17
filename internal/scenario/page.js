@@ -4,7 +4,8 @@
 //
 // Three calls, each handing its answer to done:
 //
-//   __boughPage.drawn(done)      waits until the diagram is drawn
+//   __boughPage.drawn(done)      waits until the diagram is drawn and has
+//                                finished growing in
 //   __boughPage.geometry(done)   where the stage, bare canvas and nodes are
 //   __boughPage.view(done)       where the diagram is, how large, and the note
 //                                that is up
@@ -23,9 +24,11 @@
 
   root.__boughPage = {
     drawn: function (done) {
-      // The diagram's transform is set the first time the view is applied,
-      // which is the first moment the page is what a person would see.
-      if (canvas() && canvas().getAttribute("transform")) return done();
+      // The diagram's transform is set the first time the view is applied, and
+      // the page grows the diagram in for a second after. Until both are done
+      // the page is still animating, and a recording would measure that.
+      var shown = canvas() && canvas().getAttribute("transform");
+      if (shown && !doc.body.classList.contains("growing")) return done();
       requestAnimationFrame(function () { root.__boughPage.drawn(done); });
     },
 

@@ -20,9 +20,10 @@ import (
 //	go test ./internal/scenario -browsers=chrome,safari
 var browsers = flag.String("browsers", "", "real browsers to drive, comma separated: chrome, safari")
 
-// Every scenario finds its place on bough's page as a browser drew a
-// synthetic history, and where the browser's driver input reaches the page,
-// plays, takes, and records something to judge.
+// bough's page, drawn from a synthetic history, has somewhere for every
+// scenario to land in every browser, and where the browser's driver input
+// reaches the page, every scenario plays, takes, and records something to
+// judge.
 func TestScenariosPlayOnASyntheticHistory(t *testing.T) {
 	if *browsers == "" {
 		t.Skip("no -browsers to drive")
@@ -71,21 +72,26 @@ func serve(t *testing.T, g graph.Graph) string {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	urls := make(chan string, 1)
-	stopped := make(chan error, 1)
+	// stopped closes once Serve has returned, with its error in served, so
+	// both the wait for an address and the cleanup can see it has.
+	var served error
+	stopped := make(chan struct{})
 	go func() {
-		stopped <- server.Serve(ctx, "synthetic", g, nil, func(id string) string { return id }, func(url string) { urls <- url })
+		served = server.Serve(ctx, "synthetic", g, nil, func(id string) string { return id }, func(url string) { urls <- url })
+		close(stopped)
 	}()
 	t.Cleanup(func() {
 		cancel()
-		if err := <-stopped; err != nil {
-			t.Error(err)
+		<-stopped
+		if served != nil {
+			t.Errorf("serving the page: %v", served)
 		}
 	})
 	select {
 	case url := <-urls:
 		return url
-	case err := <-stopped:
-		t.Fatalf("serving the page: %v", err)
+	case <-stopped:
+		t.Fatal("the page stopped being served before it had an address")
 		return ""
 	}
 }
