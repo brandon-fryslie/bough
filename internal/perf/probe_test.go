@@ -37,6 +37,7 @@ func TestProbeRecordsWhatParses(t *testing.T) {
 	var run struct {
 		Recording  json.RawMessage `json:"recording"`
 		AskedAgain bool            `json:"askedAgain"`
+		CutShort   bool            `json:"cutShort"`
 		Listening  int             `json:"listening"`
 		Pending    int             `json:"pending"`
 	}
@@ -54,6 +55,9 @@ func TestProbeRecordsWhatParses(t *testing.T) {
 	}
 	if !run.AskedAgain {
 		t.Error("asking a finished probe for its recording again did not hand it over")
+	}
+	if !run.CutShort {
+		t.Error("a recording cut short by a new start was never handed to the finish waiting on it")
 	}
 
 	r, err := ParseRecording(run.Recording)
@@ -101,6 +105,8 @@ function input(name, after = 3) {
 // leave one, has to stop when the next starts.
 window.__boughProbe.start(Number(process.argv[3]), () => {});
 for (let i = 0; i < 2; i++) frame();
+let cut = null;
+window.__boughProbe.finish((r) => { cut = r; });
 
 let ready = false;
 window.__boughProbe.start(Number(process.argv[3]), () => { ready = true; });
@@ -135,6 +141,7 @@ window.__boughProbe.finish((r) => { again = r; });
 console.log(JSON.stringify({
   recording,
   askedAgain: again === recording,
+  cutShort: cut !== null && cut.frames.length === 2,
   listening: Object.values(listeners).reduce((n, l) => n + l.length, 0),
   pending: pending.length,
 }));

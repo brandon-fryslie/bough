@@ -12,7 +12,8 @@
 //   __boughProbe.start(quiet, done)  records frames, and calls done once
 //                                    quiet frame intervals have passed, which
 //                                    is the cue to begin the input. A
-//                                    recording still running is dropped.
+//                                    recording still running is stopped and
+//                                    handed to any finish waiting on it.
 //   __boughProbe.finish(done)        keeps recording until two frames have
 //                                    started at or after the latest input,
 //                                    then stops and hands the recording to
@@ -30,7 +31,8 @@
   var listen = { capture: true, passive: true };
 
   // stop ends the recording in progress, so a probe started twice on one page
-  // never leaves an earlier loop and its listeners costing the page.
+  // never leaves an earlier loop and its listeners costing the page, nor a
+  // driver waiting on it.
   var stop = function () {};
 
   root.__boughProbe = {
@@ -58,17 +60,18 @@
         if (!running) return;
         recording.frames.push(t);
         if (recording.frames.length === quiet + 1) done();
-        if (finished && drawn()) {
-          stop();
-          finished(recording);
-          return;
-        }
+        if (finished && drawn()) return stop();
         requestAnimationFrame(tick);
       }
 
+      // [LAW:dataflow-not-control-flow] a recording ends one way, whether it
+      // drew its input or a new start cut it short: it stops, and whoever is
+      // waiting on finish gets it. A cut-short one fails to parse, loudly.
       stop = function () {
+        if (!running) return;
         running = false;
         INPUT.forEach(function (name) { root.removeEventListener(name, note, listen); });
+        if (finished) finished(recording);
       };
 
       INPUT.forEach(function (name) { root.addEventListener(name, note, listen); });
