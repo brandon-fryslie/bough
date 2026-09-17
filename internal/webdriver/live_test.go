@@ -20,15 +20,31 @@ import (
 //	go test ./internal/webdriver -browsers=chrome,safari
 var browsers = flag.String("browsers", "", "real browsers to drive, comma separated: chrome, safari")
 
-// page fills the window and notes each input event that reaches it, with its
-// timestamp and the page clock when it arrived.
+// driven is a browser to drive, and why input sent through its driver cannot
+// be trusted to reach the page, if it cannot.
+type driven struct {
+	browser   Browser
+	untrusted string
+}
+
+// known is every browser the test can drive, and what was found driving it.
+var known = map[string]driven{
+	"chrome": {browser: Chrome()},
+	// Seen in Safari 26.3 on macOS 26.3: most wheel steps in an action sequence reach
+	// the page as no event, sequences after the first in a session reach it as
+	// nothing, and the events that do arrive are stamped on another clock.
+	// Measuring Safari needs input from outside its driver.
+	"safari": {browser: Safari(), untrusted: "safaridriver drops most of the input it is sent"},
+}
+
+// page fills the window and notes each input event that reaches it.
 const page = `<!doctype html>
 <style>html, body { margin: 0; height: 100%; }</style>
 <script>
 window.seen = [];
 for (const name of ["pointerdown", "pointermove", "pointerup", "wheel"]) {
   addEventListener(name, (e) => {
-    seen.push({ type: e.type, trusted: e.isTrusted, stamp: e.timeStamp, now: performance.now(), deltaY: e.deltaY || 0 });
+    seen.push({ type: e.type, trusted: e.isTrusted, deltaY: e.deltaY || 0 });
   }, { passive: true });
 }
 </script>`
@@ -42,18 +58,16 @@ type seen struct {
 	Seen []struct {
 		Type    string  `json:"type"`
 		Trusted bool    `json:"trusted"`
-		Stamp   float64 `json:"stamp"`
-		Now     float64 `json:"now"`
 		DeltaY  float64 `json:"deltaY"`
 	} `json:"seen"`
 	Frame float64 `json:"frame"`
 	Now   float64 `json:"now"`
 }
 
-// Real input reaches a real page as trusted events, stamped on the same clock
-// the page's frames are, which is what lets a recording set one against the
-// other.
-func TestRealInputReachesTheBrowser(t *testing.T) {
+// A real browser loads a page, runs scripts in it, and keeps the one clock the
+// probe times frames and input by. Where its driver's input can be trusted,
+// that input reaches the page and the probe records it.
+func TestRealBrowsers(t *testing.T) {
 	if *browsers == "" {
 		t.Skip("no -browsers to drive")
 	}
@@ -62,21 +76,32 @@ func TestRealInputReachesTheBrowser(t *testing.T) {
 	}))
 	t.Cleanup(site.Close)
 
-	known := map[string]Browser{"chrome": Chrome(), "safari": Safari()}
 	names := strings.FieldsFunc(*browsers, func(r rune) bool { return r == ',' || r == ' ' })
 	for _, name := range names {
 		t.Run(name, func(t *testing.T) {
-			b, ok := known[name]
+			d, ok := known[name]
 			if !ok {
 				t.Fatalf("no browser called %q", name)
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
 			// One session a browser, because Safari allows only one at a time.
-			s := open(ctx, t, b)
-			t.Run("input", inputReachesThePage(ctx, s, site.URL))
-			t.Run("probe", probeRecordsIt(ctx, s, site.URL))
+			s := open(ctx, t, d.browser)
+
+			t.Run("clock", framesAndInputShareAClock(ctx, s, site.URL))
+			t.Run("input", d.withInput(inputReachesThePage(ctx, s, site.URL)))
+			t.Run("probe", d.withInput(probeRecordsIt(ctx, s, site.URL)))
 		})
+	}
+}
+
+// withInput is check, run only where the driver's input can be trusted.
+func (d driven) withInput(check func(*testing.T)) func(*testing.T) {
+	return func(t *testing.T) {
+		if d.untrusted != "" {
+			t.Skip(d.untrusted)
+		}
+		check(t)
 	}
 }
 
@@ -105,41 +130,52 @@ func open(ctx context.Context, t *testing.T, b Browser) *Session {
 	return s
 }
 
-// A drag and a wheel turn arrive as trusted events, each stamped on the clock
-// the page's frames start by.
-func inputReachesThePage(ctx context.Context, s *Session, url string) func(*testing.T) {
-	return func(t *testing.T) {
-		if err := s.Navigate(ctx, url); err != nil {
-			t.Fatal(err)
-		}
-		drag := Actions{Mouse: []MouseStep{Move{X: 100, Y: 100}, Press{}, Move{X: 200, Y: 150, Over: 200 * time.Millisecond}, Release{}}}
-		if err := s.Perform(ctx, drag); err != nil {
-			t.Fatal(err)
-		}
-		zoom := Actions{Wheel: []WheelStep{Scroll{X: 200, Y: 150, DeltaY: 120}}}
-		if err := s.Perform(ctx, zoom); err != nil {
-			t.Fatal(err)
-		}
+// see loads the page, performs a, and hands back what the page saw.
+func see(ctx context.Context, t *testing.T, s *Session, url string, a Actions) seen {
+	t.Helper()
+	if err := s.Navigate(ctx, url); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Perform(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := s.ExecuteAsync(ctx, read)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got seen
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("reading what the page saw: %v\n%s", err, raw)
+	}
+	return got
+}
 
-		raw, err := s.ExecuteAsync(ctx, read)
-		if err != nil {
-			t.Fatal(err)
+// performance.now, which the probe reads when input reaches the page, reads
+// the clock a frame's start is given on. Event timestamps are not used, and
+// not checked: Safari stamps the input it is driven with on some other clock.
+func framesAndInputShareAClock(ctx context.Context, s *Session, url string) func(*testing.T) {
+	return func(t *testing.T) {
+		got := see(ctx, t, s, url, Actions{Mouse: []MouseStep{Pause(0)}})
+		if lag := got.Now - got.Frame; lag < -1 || lag > 1000 {
+			t.Errorf("frame started %.1f but the clock read %.1f inside it: not one clock", got.Frame, got.Now)
 		}
-		var got seen
-		if err := json.Unmarshal(raw, &got); err != nil {
-			t.Fatalf("reading what the page saw: %v\n%s", err, raw)
-		}
+		t.Logf("frame at %.1f, clock %.1f", got.Frame, got.Now)
+	}
+}
+
+// A drag and a wheel turn arrive as trusted events.
+func inputReachesThePage(ctx context.Context, s *Session, url string) func(*testing.T) {
+	return func(t *testing.T) { //nolint:thelper // a subtest body, handed to t.Run through withInput
+		got := see(ctx, t, s, url, Actions{
+			Mouse: []MouseStep{Move{X: 100, Y: 100}, Press{}, Move{X: 200, Y: 150, Over: 200 * time.Millisecond}, Release{}, Pause(0)},
+			Wheel: []WheelStep{Pause(0), Pause(0), Pause(0), Pause(0), Scroll{X: 200, Y: 150, DeltaY: 120}},
+		})
 
 		types := map[string]int{}
 		for _, e := range got.Seen {
 			types[e.Type]++
 			if !e.Trusted {
 				t.Errorf("%s was not trusted, so it came from script, not the browser's input", e.Type)
-			}
-			// On one clock, an event is stamped at or before it is handled, and
-			// not long before.
-			if lag := e.Now - e.Stamp; lag < -1 || lag > 1000 {
-				t.Errorf("%s stamped %.1f but handled at %.1f: not the page's clock", e.Type, e.Stamp, e.Now)
 			}
 			if e.Type == "wheel" && e.DeltaY <= 0 {
 				t.Errorf("wheel turned by %v, want down", e.DeltaY)
@@ -150,18 +186,15 @@ func inputReachesThePage(ctx context.Context, s *Session, url string) func(*test
 				t.Errorf("no %s reached the page; saw %v", want, types)
 			}
 		}
-		if lag := got.Now - got.Frame; lag < -1 || lag > 1000 {
-			t.Errorf("frame started %.1f but the clock read %.1f inside it: not the page's clock", got.Frame, got.Now)
-		}
-		t.Logf("saw %v; frame at %.1f, clock %.1f", types, got.Frame, got.Now)
+		t.Logf("saw %v", types)
 	}
 }
 
 // The frame probe, fed real wheel input, hands back a recording that parses
-// and judges some frames: the probe and this client meet here and nowhere
-// else before a run.
+// and judges some frames: the probe and this client meet here and nowhere else
+// before a run.
 func probeRecordsIt(ctx context.Context, s *Session, url string) func(*testing.T) {
-	return func(t *testing.T) {
+	return func(t *testing.T) { //nolint:thelper // a subtest body, handed to t.Run through withInput
 		if err := s.Navigate(ctx, url); err != nil {
 			t.Fatal(err)
 		}

@@ -3,8 +3,8 @@
 //
 // It notes when the browser starts each frame and when input reaches the page,
 // both on the page's own clock, and judges nothing. Every browser has
-// requestAnimationFrame and input event timestamps, so a recording means the
-// same thing in Chrome as in Safari. Go parses what comes back and does the
+// requestAnimationFrame and performance.now, so a recording means the same
+// thing in Chrome as in Safari. Go parses what comes back and does the
 // arithmetic.
 //
 // Two calls, made by whatever drives the browser:
@@ -21,10 +21,9 @@
 //
 // Why two: a frame's time is when it starts, before its layout and paint, so
 // the first frame at or after an input is the one that handled it and only the
-// start of the next shows how long that took. The input's own time can also
-// fall after the start of the frame that dispatches it, so the count is taken
-// against the input's time rather than against when finish was called.
-// ParseRecording refuses a recording that stops sooner.
+// start of the next shows how long that took. The count is taken against the
+// input's time rather than against when finish was called, since input can
+// still be arriving then. ParseRecording refuses a recording that stops sooner.
 (function (root) {
   // input is here for text that arrives without a key, as a driver can type it.
   var INPUT = ["pointerdown", "pointermove", "pointerup", "wheel", "keydown", "input"];
@@ -43,7 +42,10 @@
       var running = true;
       var finished = null;
 
-      function note(e) { recording.inputs.push(e.timeStamp); }
+      // An input's time is when it reached the page, read from the clock the
+      // frames are timed by. Not event.timeStamp: Safari stamps input it is
+      // driven with on some other clock, and a wheel turn at zero.
+      function note() { recording.inputs.push(root.performance.now()); }
 
       // drawn is whether two frames have started at or after the latest input.
       // Inputs are kept as they arrive, which need not be the order of their

@@ -62,8 +62,7 @@ func ParseRecording(raw []byte) (Recording, error) {
 			return Recording{}, fmt.Errorf("frame %d at %v does not follow frame %d at %v", i, frames[i], i-1, frames[i-1])
 		}
 	}
-	// A browser need not stamp events in the order it dispatches them, and
-	// only when input happened matters here.
+	// Only when input happened matters here, not the order it was noted in.
 	slices.Sort(inputs)
 
 	if len(inputs) == 0 {
