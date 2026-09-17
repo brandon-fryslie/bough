@@ -142,7 +142,7 @@ func TestAProjectInNoRepositoryOpensAsBefore(t *testing.T) {
 // makes, whichever agents were asked for. Left out, a worktree's code counts as
 // the agent's own bookkeeping.
 func TestAFamilyBuildCarriesEveryAgentsRecord(t *testing.T) {
-	opt := options(everyAgentsRecord(), &repo.Disk{}, family.Project{Path: app}, true)
+	opt := options(everyAgentsRecord(), &repo.Disk{}, family.WithoutRepository(nil, nil), family.Project{Path: app}, nil, true)
 	if got, want := len(opt.Ambience.Made), len(registry.All()); got != want {
 		t.Errorf("the build carries %d agents' records, want %d", got, want)
 	}

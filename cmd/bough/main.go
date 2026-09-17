@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -178,7 +179,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("no readable history for %s", target.Name())
 	}
 
-	g := graph.Build(target, sessions, options(made, disk, target, *noRepo))
+	g := graph.Build(target, sessions, options(made, disk, families, target, sessions, *noRepo))
 
 	w := stdout
 	if *out != "" {
@@ -233,10 +234,12 @@ func resolver(projects []agent.Project, made []agent.MadeFor, disk *repo.Disk, n
 // package that does both cannot be tested without a filesystem. Every
 // checkout of the project's repository among its directories is read, since
 // each worktree has a branch of its own. A project in no repository has none,
-// and nothing is read, as before.
-func options(made []agent.MadeFor, disk *repo.Disk, p family.Project, noRepo bool) graph.Options {
+// and nothing is read, as before. So is where the work done outside the
+// project landed.
+func options(made []agent.MadeFor, disk *repo.Disk, families *family.Resolver, p family.Project, sessions []agent.Session, noRepo bool) graph.Options {
 	opt := graph.DefaultOptions(made)
 	opt.Tool = released()
+	opt.Elsewhere = elsewhere(families, disk, p, graph.Visited(p, sessions), temporary(), noRepo)
 	if !noRepo {
 		dirs := make([]string, 0, len(p.Members)+1)
 		dirs = append(dirs, p.Path)
@@ -246,6 +249,67 @@ func options(made []agent.MadeFor, disk *repo.Disk, p family.Project, noRepo boo
 		opt.Repo = repo.ReadAll(disk.Checkouts(p.Path, dirs))
 	}
 	return opt
+}
+
+// elsewhere answers what the graph asks about the places a project's
+// sittings worked: where each path leads once symlinks are followed, whether
+// anything is there, and whose family that is. And, unless git is not to be
+// read, the history of each other family a commit was made in, so its hashes
+// are checked as the project's own are.
+//
+// The graph decides what counts as work done elsewhere. A repository read
+// here for a commit it goes on to set aside is a read and nothing more.
+func elsewhere(families *family.Resolver, disk *repo.Disk, p family.Project, v graph.Visits, temporary []string, noRepo bool) graph.Elsewhere {
+	e := graph.Elsewhere{Places: map[string]graph.Place{}, Repos: map[string]repo.History{}, Temporary: temporary}
+	for _, at := range slices.Concat(v.Files, v.Dirs) {
+		e.Places[at] = where(families, at)
+	}
+	if noRepo {
+		return e
+	}
+
+	// Each family's main tree, and every directory a commit was made in
+	// there, which may be a worktree on a branch of its own.
+	checkouts := map[string][]string{}
+	for _, dir := range v.Dirs {
+		f := e.Places[dir].Family
+		if f.Evidence == family.None || p.Is(f) {
+			continue
+		}
+		if _, ok := checkouts[f.Key()]; !ok {
+			checkouts[f.Key()] = []string{f.Name}
+		}
+		checkouts[f.Key()] = append(checkouts[f.Key()], e.Places[dir].Path)
+	}
+	for key, dirs := range checkouts {
+		e.Repos[key] = repo.ReadAll(disk.Checkouts(dirs[0], dirs))
+	}
+	return e
+}
+
+// where is what the machine says about one path: where it leads, and whose
+// family that is. A path the disk cannot follow, because nothing is there or
+// it may not be read, is answered as it was asked.
+func where(families *family.Resolver, at string) graph.Place {
+	led, err := filepath.EvalSymlinks(at)
+	if err != nil {
+		return graph.Place{Path: at, Family: families.Resolve(at)}
+	}
+	return graph.Place{Path: led, Exists: true, Family: families.Resolve(led)}
+}
+
+// temporary are the directories this machine throws away: its own temporary
+// directory and the conventional one, each also as its symlinks lead, since
+// a path can arrive spelled either way. /tmp is where Claude Code makes its
+// scratchpads, wherever the platform's own temporary directory is.
+func temporary() []string {
+	roots := []string{os.TempDir(), "/tmp"}
+	for _, root := range roots {
+		if led, err := filepath.EvalSymlinks(root); err == nil && led != root {
+			roots = append(roots, led)
+		}
+	}
+	return roots
 }
 
 // historyRoot is where to read an agent's history: the --root given, or the

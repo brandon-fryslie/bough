@@ -11,9 +11,9 @@ approach that has been tried.
 ## They are constants, not flags
 
 Worth saying plainly: none of these can be changed from the command line. They
-live in `DefaultOptions()` in `internal/segment` and `internal/rollup`, and in
-`Summary.Struggle()` in `internal/metrics`. Changing one means editing Go and
-rebuilding.
+live in `DefaultOptions()` in `internal/segment`, `internal/rollup` and
+`internal/graph`, and in `Summary.Struggle()` in `internal/metrics`. Changing
+one means editing Go and rebuilding.
 
 That is deliberate for now. Guessing at a flag set before anyone has said the
 defaults are wrong is how a tool ends up with fifteen options nobody uses. If
@@ -109,6 +109,24 @@ on each side is a passing visit, not resumed work.
 
 Ambient files are excluded before links are counted. Without that, every
 sitting links to every other through the agent's own plan file.
+
+## Which work in other projects is recorded
+
+`internal/graph`, `DefaultOptions()`.
+
+| name | default | what it does |
+|---|---|---|
+| `MinVisit` | 2 | The fewest edits a sitting's work in another family needs |
+
+A sitting records the files it edited and the commits it made in each other
+family it worked in. One edit there is a passing visit, the same judgement the
+link threshold makes: on the history this was fitted to, one-edit visits were
+26 of 83 (sitting, family) pairs and 26 of 789 edits. A commit is never
+incidental, so a visit that committed is recorded whatever its edits.
+
+The agent's own files, scratchpads and temporary directories, a repository's
+`.git` directory, and paths in no family and no repository are left out before
+anything is counted.
 
 ## The struggle score
 
