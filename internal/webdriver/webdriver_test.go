@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"reflect"
 	"strings"
 	"sync"
@@ -14,16 +16,16 @@ import (
 	"time"
 )
 
-// fakeDriver answers one command per method and path with a status and a body,
+// fakeServer answers one command per method and path with a status and a body,
 // and keeps what each command was sent.
-type fakeDriver struct {
+type fakeServer struct {
 	replies map[string]reply
 	mu      sync.Mutex
 	sent    map[string]string
 }
 
 // body is what command was last sent.
-func (f *fakeDriver) body(command string) string {
+func (f *fakeServer) body(command string) string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.sent[command]
@@ -34,9 +36,9 @@ type reply struct {
 	body   string
 }
 
-func serve(t *testing.T, replies map[string]reply) (*fakeDriver, endpoint) {
+func serve(t *testing.T, replies map[string]reply) (*fakeServer, endpoint) {
 	t.Helper()
-	f := &fakeDriver{replies: replies, sent: map[string]string{}}
+	f := &fakeServer{replies: replies, sent: map[string]string{}}
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := r.Method + " " + r.URL.Path
 		body, _ := io.ReadAll(r.Body)
@@ -199,12 +201,66 @@ func TestADriverThatCannotRunSaysWhy(t *testing.T) {
 		t.Errorf("a missing driver failed with %v, want how to install one", err)
 	}
 
+	t.Setenv(fakeDriver, "exit")
 	begun := time.Now()
-	_, err = Start(ctx, Chrome().WithDriver("false"))
+	_, err = Start(ctx, Chrome().WithDriver(os.Args[0]))
 	if err == nil || !strings.Contains(err.Error(), "exited before it was ready") {
 		t.Errorf("a driver that exits failed with %v", err)
 	}
 	if waited := time.Since(begun); waited > ready/2 {
 		t.Errorf("waited %v for a driver that had already exited", waited)
 	}
+}
+
+// A browser a driver started can outlive it, still holding the driver's
+// output. Stopping the driver must not wait for that browser to go.
+func TestStoppingADriverDoesNotWaitOnWhatItLeftRunning(t *testing.T) {
+	t.Setenv(fakeDriver, "orphan")
+	d, err := Start(context.Background(), Chrome().WithDriver(os.Args[0]))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	begun := time.Now()
+	d.Stop()
+	if waited := time.Since(begun); waited > 5*time.Second {
+		t.Errorf("stopping took %v, waiting on the driver's leftover child", waited)
+	}
+}
+
+// fakeDriver names the environment variable that turns this test binary into a
+// driver program behaving badly on cue, which no real driver does reliably.
+const fakeDriver = "BOUGH_FAKE_DRIVER"
+
+// leftover is how long the orphan's child holds the driver's output open.
+const leftover = 20 * time.Second
+
+func TestMain(m *testing.M) {
+	switch os.Getenv(fakeDriver) {
+	case "exit":
+		os.Exit(3)
+	case "orphan":
+		orphanAndServe()
+	case "leftover":
+		time.Sleep(leftover)
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
+// orphanAndServe starts a child that shares this process's output and outlives
+// it, as a browser does, then answers /status on the port it was given.
+func orphanAndServe() {
+	child := exec.Command(os.Args[0])
+	child.Env = append(os.Environ(), fakeDriver+"=leftover")
+	child.Stdout = os.Stdout
+	if err := child.Start(); err != nil {
+		os.Exit(4)
+	}
+	port := strings.TrimPrefix(os.Args[len(os.Args)-1], "--port=")
+	ready := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"value":{"ready":true}}`)
+	})
+	_ = http.ListenAndServe("127.0.0.1:"+port, ready)
+	os.Exit(5)
 }

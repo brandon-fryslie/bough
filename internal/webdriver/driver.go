@@ -88,6 +88,9 @@ func Start(ctx context.Context, b Browser) (*Driver, error) {
 	}
 	d.process.Stdout = d.output
 	d.process.Stderr = d.output
+	// The browser the driver starts inherits its output, and can outlive it.
+	// Once the driver itself has exited, stop waiting on what it left behind.
+	d.process.WaitDelay = time.Second
 	if err := d.process.Start(); err != nil {
 		return nil, fmt.Errorf("webdriver: starting %s: %w", path, err)
 	}
@@ -141,7 +144,9 @@ func (d *Driver) NewSession(ctx context.Context) (*Session, error) {
 	return s, err
 }
 
-// Stop ends the driver program and waits for it to go.
+// Stop ends the driver program and waits for it to go. Close sessions first:
+// no driver closes its browser when it is killed, so a session never closed
+// leaves its window open.
 func (d *Driver) Stop() {
 	_ = d.process.Process.Kill()
 	<-d.exited
