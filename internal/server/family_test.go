@@ -32,7 +32,9 @@ func site(t *testing.T, first graph.Graph, families map[string]Build) (string, *
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(routes(built, first.Project.Path))
+	srv := httptest.NewUnstartedServer(nil)
+	srv.Config.Handler = routes(built, first.Project.Path, srv.Listener.Addr().String())
+	srv.Start()
 	t.Cleanup(srv.Close)
 	return srv.URL, built
 }
@@ -167,13 +169,16 @@ func TestASlowBuildShowsItIsBuilding(t *testing.T) {
 	}})
 
 	for range 2 {
-		waiting := body(t, family(base, "/work/second", ""), http.StatusAccepted)
+		resp, waiting := get(t, family(base, "/work/second", ""))
+		if resp.StatusCode != http.StatusAccepted {
+			t.Fatalf("status %d while the build is held, want 202", resp.StatusCode)
+		}
 		if !strings.Contains(waiting, "Reading the history of /work/second") {
 			t.Errorf("the page does not say the family is building:\n%s", waiting)
 		}
 		// It asks the address it came from, which carries the key.
-		if !strings.Contains(waiting, `<meta http-equiv="refresh" content="1">`) {
-			t.Error("the building page does not ask again by itself")
+		if got := resp.Header.Get("Refresh"); got != "1" {
+			t.Errorf("the building page refreshes with %q, want every second", got)
 		}
 		if strings.Contains(waiting, "window.BOUGH") {
 			t.Error("the building page carries a drawing")
@@ -309,12 +314,12 @@ func TestAMalformedDateIsABadRequest(t *testing.T) {
 	for _, c := range []struct {
 		query, says string
 	}{
-		{"from=yesterday", `from=&quot;yesterday&quot; is not a date written as YYYY-MM-DD`},
-		{"to=2026-13-01", `to=&quot;2026-13-01&quot; is not a date`},
-		{"from=2026-8-1", `from=&quot;2026-8-1&quot; is not a date`},
-		{"to=2026-02-30", `to=&quot;2026-02-30&quot; is not a date`},
+		{"from=yesterday", `from="yesterday" is not a date written as YYYY-MM-DD`},
+		{"to=2026-13-01", `to="2026-13-01" is not a date`},
+		{"from=2026-8-1", `from="2026-8-1" is not a date`},
+		{"to=2026-02-30", `to="2026-02-30" is not a date`},
 		{"from=2026-08-02&to=2026-08-01", "the range runs backwards: from 2026-08-02 is after to 2026-08-01"},
-		{"from=%3C/script%3E", `from=&quot;&lt;/script&gt;&quot; is not a date`},
+		{"from=%3C/script%3E", `from="</script>" is not a date`},
 	} {
 		for _, address := range []string{base + "/?" + c.query, family(base, "/work/second", "&"+c.query)} {
 			page := body(t, address, http.StatusBadRequest)
@@ -335,9 +340,16 @@ func TestAMalformedDateIsABadRequest(t *testing.T) {
 func TestAnUnknownFamilyIsNotFound(t *testing.T) {
 	base, _ := site(t, sample(), map[string]Build{"/work/second": func() (graph.Graph, error) { return second(), nil }})
 
-	for _, key := range []string{"/work/none", "", "/work/second/.."} {
-		page := body(t, family(base, key, ""), http.StatusNotFound)
-		if !strings.Contains(page, "No project has the identifier &quot;"+key+"&quot;.") {
+	for _, key := range []string{"/work/none", "", "/work/second/..", "<script>alert(1)</script>"} {
+		resp, page := get(t, family(base, key, ""))
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("%q: status %d, want 404", key, resp.StatusCode)
+		}
+		// Plain text, so an identifier holding markup is shown as written.
+		if got := resp.Header.Get("Content-Type"); !strings.HasPrefix(got, "text/plain") || resp.Header.Get("X-Content-Type-Options") != "nosniff" {
+			t.Errorf("%q: served as %q, want plain text the browser does not sniff", key, got)
+		}
+		if !strings.Contains(page, `No project has the identifier "`+key+`".`) {
 			t.Errorf("%q: the page does not say no project has it:\n%s", key, page)
 		}
 		if strings.Contains(page, "window.BOUGH") {
@@ -383,5 +395,32 @@ func TestAFailedBuildIsTriedAgain(t *testing.T) {
 	}
 	if n := calls.Load(); n != 2 {
 		t.Errorf("built %d times, want twice: once failing and once again", n)
+	}
+}
+
+// Only requests addressed to the server's own address are answered. A page
+// elsewhere that points a name of its own at 127.0.0.1 sends that name as the
+// host, and is refused before any family is built for it.
+func TestARequestForAnotherHostIsRefused(t *testing.T) {
+	var calls atomic.Int32
+	base, _ := site(t, sample(), map[string]Build{"/work/second": counted(second(), &calls)})
+
+	for _, address := range []string{base + "/", family(base, "/work/second", ""), base + "/img/logo.png"} {
+		req, err := http.NewRequest(http.MethodGet, address, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Host = "rebound.example:" + strings.Split(base, ":")[2]
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusMisdirectedRequest {
+			t.Errorf("%s asked for as %s: status %d, want 421", address, req.Host, resp.StatusCode)
+		}
+	}
+	if n := calls.Load(); n != 0 {
+		t.Errorf("a refused request started %d builds", n)
 	}
 }

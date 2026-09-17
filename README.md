@@ -61,8 +61,9 @@ needs is inside the binary, so it keeps working with the network unplugged.
 
 While it runs, the same address opens any other project without a restart:
 `/family?key=<path>`, where the path is the project's as `bough --list` shows
-it, in lower case. Add `&from=2026-08-01&to=2026-08-20` to open it on those
-dates, which `/` accepts too. A project is read the first time it is asked for
+it, in lower case with forward slashes, and URL-encoded. Add
+`&from=2026-08-01&to=2026-08-20` to open it on those dates, which `/` accepts
+too. A project is read the first time it is asked for
 and kept until bough stops, so a large one shows that it is being read for a
 few seconds first.
 

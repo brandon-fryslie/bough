@@ -60,7 +60,7 @@ func Serve(ctx context.Context, first string, g graph.Graph, families map[string
 	}
 
 	srv := &http.Server{
-		Handler:           routes(built, first),
+		Handler:           routes(built, first, listener.Addr().String()),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -84,7 +84,13 @@ func Serve(ctx context.Context, first string, g graph.Graph, families map[string
 // opened on, and /family is any family by its key. The key is a query
 // parameter rather than part of the path because keys are paths themselves,
 // and the mux redirects a path holding "//".
-func routes(built *pages, first string) http.Handler {
+//
+// Only requests addressed to host, the address the listener bound, are
+// answered. Binding loopback keeps other machines out, but a web page open in
+// the same browser can point a name it controls at 127.0.0.1 and read
+// whatever answers there as its own. Its requests carry its own name as the
+// host, so they are refused before any history is read.
+func routes(built *pages, first, host string) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -99,7 +105,14 @@ func routes(built *pages, first string) http.Handler {
 	})
 
 	mux.Handle("/img/", http.FileServer(http.FS(assets)))
-	return mux
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Host != host {
+			notice(w, http.StatusMisdirectedRequest, fmt.Sprintf("bough answers only at http://%s.", host))
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
 }
 
 // respond answers a request for one family's page: the page, opened on the
@@ -114,21 +127,21 @@ func respond(w http.ResponseWriter, r *http.Request, built *pages, key string) {
 	// cannot be answered never starts a build.
 	opened, err := parseSpan(r.URL.Query())
 	if err != nil {
-		notice(w, http.StatusBadRequest, "", err.Error())
+		notice(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	found := built.look(key)
 	switch found.state {
 	case unknown:
-		notice(w, http.StatusNotFound, "", fmt.Sprintf("No project has the identifier %q.", key))
+		notice(w, http.StatusNotFound, fmt.Sprintf("No project has the identifier %q.", key))
 	case building:
-		// The page asks again every second until the real one is there. The
-		// refresh has no address, so it asks the one it came from.
-		notice(w, http.StatusAccepted, `<meta http-equiv="refresh" content="1">`,
-			fmt.Sprintf("Reading the history of %s. Its page opens here when it is ready.", key))
+		// The browser asks again every second until the real page is there.
+		// The refresh names no address, so it asks the one it came from.
+		w.Header().Set("Refresh", "1")
+		notice(w, http.StatusAccepted, fmt.Sprintf("Reading the history of %s. Its page opens here when it is ready.", key))
 	case failed:
-		notice(w, http.StatusInternalServerError, "", found.err.Error())
+		notice(w, http.StatusInternalServerError, found.err.Error())
 	case ready:
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		// A failed write means the browser went away mid-response, which is
@@ -138,29 +151,19 @@ func respond(w http.ResponseWriter, r *http.Request, built *pages, key string) {
 	}
 }
 
-// notice is a plain page saying one thing, for every answer that is not a
-// drawing. head goes into the page's head as it is, so it must be markup this
-// package wrote; the message is escaped.
-func notice(w http.ResponseWriter, status int, head, message string) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+// notice is a plain text page saying one thing, for every answer that is not
+// a drawing.
+//
+// Plain text rather than markup, because the message can hold what the request
+// said: an identifier, a date. As text it cannot be anything but text, so
+// there is nothing to escape and no escaping to forget. nosniff stops a
+// browser second-guessing that.
+func notice(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)
-	_, _ = fmt.Fprintf(w, noticePage, head, escapeHTML(message)) //#nosec G705 -- the message is escaped, and head is this package's own markup
+	_, _ = io.WriteString(w, message+"\n") //#nosec G705 -- served as text/plain with nosniff, so it is never markup
 }
-
-// noticePage holds a head addition and an escaped message. It uses the
-// system's own font, since the embedded ones belong to the drawing and a
-// notice has no reason to carry them.
-const noticePage = `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-%s
-<title>bough</title>
-<style>body { font: 16px/1.5 system-ui, sans-serif; margin: 4rem auto; max-width: 40rem; padding: 0 1rem; white-space: pre-wrap; }</style>
-</head>
-<body>%s</body>
-</html>
-`
 
 // page is a family's page, whole but for the date range it opens on, which
 // each request brings its own of.
