@@ -19,7 +19,7 @@ func TestThePageNamesTheAgent(t *testing.T) {
 			Schema:  graph.SchemaVersion,
 			Project: graph.Project{Name: "a project", Path: "/p", Agents: []string{id}},
 		}
-		b, err := render(g, spelled)
+		b, err := render(g, spelled, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -33,7 +33,7 @@ func TestThePageNamesTheAgent(t *testing.T) {
 // graph lists them, since that order is what gives each agent its mark.
 func TestThePageNamesEveryAgentInOrder(t *testing.T) {
 	g := graph.Graph{Schema: graph.SchemaVersion, Project: graph.Project{Agents: []string{"claude-code", "codex"}}}
-	b, err := render(g, spelled)
+	b, err := render(g, spelled, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestThePageNamesEveryAgentInOrder(t *testing.T) {
 // the page as something other than what the terminal called it.
 func TestThePageTakesAgentNamesFromGo(t *testing.T) {
 	g := graph.Graph{Schema: graph.SchemaVersion, Project: graph.Project{Agents: []string{"p<i>"}}}
-	b, err := render(g, func(string) string { return "Pi <agent>" })
+	b, err := render(g, func(string) string { return "Pi <agent>" }, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

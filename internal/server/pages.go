@@ -34,17 +34,24 @@ type making struct {
 
 // newPages holds the page for g, the family first names, from the start.
 func newPages(first string, g graph.Graph, families map[string]Build, named func(agentID string) string) (*pages, error) {
-	opened, err := render(g, named)
+	p := &pages{families: families, named: named}
+	opened, err := p.render(g)
 	if err != nil {
 		return nil, err
 	}
 	done := make(chan struct{})
 	close(done)
-	return &pages{
-		families: families,
-		named:    named,
-		byKey:    map[string]*making{first: {done: done, page: opened}},
-	}, nil
+	p.byKey = map[string]*making{first: {done: done, page: opened}}
+	return p, nil
+}
+
+// render draws a family's page.
+//
+// [LAW:single-enforcer] The page bough opened on and every page built on
+// request are drawn here, so each links to the same families: the ones this
+// server can build.
+func (p *pages) render(g graph.Graph) (page, error) {
+	return render(g, p.named, p.families)
 }
 
 // state is where a family's page stands when it is asked for.
@@ -82,7 +89,7 @@ func (p *pages) look(key string) found {
 		}
 		m = &making{done: make(chan struct{})}
 		p.byKey[key] = m
-		go m.make(build, p.named)
+		go m.make(build, p.render)
 	}
 
 	select {
@@ -101,14 +108,14 @@ func (p *pages) look(key string) found {
 }
 
 // make builds the page and then says it is finished.
-func (m *making) make(build Build, named func(agentID string) string) {
+func (m *making) make(build Build, render func(graph.Graph) (page, error)) {
 	defer close(m.done)
 	g, err := build()
 	if err != nil {
 		m.err = err
 		return
 	}
-	m.page, m.err = render(g, named)
+	m.page, m.err = render(g)
 }
 
 // span is the date range a page opens on: each end a day as the page's date

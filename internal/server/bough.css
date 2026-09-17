@@ -51,6 +51,20 @@
      on the darkest surface it lands on. */
   --stamp:   #30661d;
 
+  /* Work a sitting did in another project, and the way to that project. Not
+     one of the colours above, for the reason commits have their own: each
+     already says something else, and a mark in any of them would say the
+     sitting was a prompt, a day, hard work or a commit.
+
+     A plum, at a hue of 302. The page's own colours sit between 23 and 105,
+     and blue was tried for commits and read as borrowed from another design,
+     so this goes the other way round the wheel from the rust, into a colour
+     that still belongs beside browns and olives. 6.9 to 1 on the page and 6.3
+     on the panel and the note, where it is read as text. On the brown of a
+     day it is 1.0, so the mark carries a ring of the page's ground and never
+     touches the brown. */
+  --away:    #7a3a78;
+
   --ink:     #241f17;
   --ink-mid: #6b6151;
   /* Quiet, but still above 4.5 to 1. Figures along the foot and timestamps in
@@ -606,6 +620,20 @@ body.nothing .empty { display: flex; }
 
 .task.faded .shipped-mark { opacity: 0.25; }
 
+/* A sitting that worked in other projects. It sits on the day's corner, ringed
+   in the ground so it reads against the brown square as well as the page. It
+   is something to hover, so it takes the pointer, and a keyboard reaches it
+   the way it reaches a task. */
+.away-mark {
+  fill: var(--away);
+  stroke: var(--ground);
+  stroke-width: 2;
+  cursor: pointer;
+}
+
+.away-mark:focus { outline: none; }
+.away-mark:focus-visible { stroke: var(--ink); stroke-dasharray: 2 2; }
+
 .task-node,
 .day-node { cursor: pointer; }
 
@@ -839,6 +867,14 @@ body.growing .day {
   letter-spacing: 0.07em;
   text-transform: uppercase;
   color: var(--ink-low);
+}
+
+/* The word heading the note on a sitting's work elsewhere, which reads as the
+   start of each line under it, as it does in the terminal. */
+#pop .pop-away {
+  display: block;
+  margin: 0;
+  color: var(--away);
 }
 
 .pop-when {
@@ -1375,8 +1411,10 @@ body.reading #reader { transform: none; }
 
 /* ---- commits ------------------------------------------------------------ */
 
-/* The summary at the head of the record, listing what the work shipped. */
-.commits {
+/* The summary at the head of the record, listing what the work shipped, and
+   the list of what it did in other projects, drawn the same way. */
+.commits,
+.away {
   margin: 0 0 1.4rem;
   padding: 0.7rem 0.85rem;
   background: var(--raised);
@@ -1384,12 +1422,68 @@ body.reading #reader { transform: none; }
   border-radius: 7px;
 }
 
-.commits-head {
+.commits-head,
+.away-head {
   margin: 0 0 0.5rem;
   font: 600 0.76rem var(--display);
   letter-spacing: 0.02em;
   color: var(--stamp);
 }
+
+.away-head { color: var(--away); }
+
+/* One project the sitting worked in: its name, what was done there, the
+   files, and the commits. */
+.visit + .visit {
+  margin-top: 0.8rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--rule);
+}
+
+.visit-name {
+  margin: 0;
+  font: 600 0.9rem/1.35 var(--display);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+/* A link, and plainly one, since following it leaves this project. */
+.visit-link {
+  color: var(--away);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.visit-link:hover { text-decoration-thickness: 2px; }
+.visit-link:focus-visible { outline: 2px solid var(--away); outline-offset: 2px; }
+
+.visit-said {
+  margin: 0.15rem 0 0.5rem;
+  font-size: 0.72rem;
+  color: var(--ink-low);
+}
+
+.visit-files {
+  margin: 0 0 0.5rem;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.15rem;
+  font-size: 0.76rem;
+  color: var(--ink-mid);
+}
+
+.visit-file { display: flex; gap: 0.6rem; }
+
+.visit-file b {
+  flex: 0 0 2.5ch;
+  text-align: right;
+  font-weight: 400;
+  color: var(--ink-low);
+  font-variant-numeric: tabular-nums;
+}
+
+.visit-file span { min-width: 0; overflow-wrap: anywhere; }
 
 .commit-list {
   margin: 0;
@@ -1426,6 +1520,11 @@ p.commit {
   background: none;
   user-select: text;
 }
+
+/* A hash the repository was never asked about is whatever the transcript
+   said. It keeps its place, since it is still what was recorded, but not the
+   commit green that says the repository confirmed it. */
+.commit-sha.unread { color: var(--ink-low); }
 
 .commit-subject {
   flex: 1 1 12rem;

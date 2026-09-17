@@ -66,8 +66,7 @@ func WriteText(w io.Writer, g Graph, verbose bool, named func(agentID string) st
 		if p.RepoRead {
 			fmt.Fprintf(w, "%s\n", plural(n, "commit"))
 		} else {
-			fmt.Fprintf(w, "%s, as the transcript recorded them: the repository was not read\n",
-				plural(n, "commit"))
+			fmt.Fprintf(w, "%s, %s\n", plural(n, "commit"), unread)
 		}
 	}
 	// Most of what a project costs is the model re-reading the conversation
@@ -89,74 +88,7 @@ func WriteText(w io.Writer, g Graph, verbose bool, named func(agentID string) st
 	}
 
 	for _, goal := range g.Goals {
-		fmt.Fprintf(w, "\n%s\n", strings.Repeat("-", 72))
-		fmt.Fprintf(w, "%-14s %s%s\n", goal.Period, mark(goal), goal.Label)
-
-		s := goal.Stats
-		fmt.Fprintf(w, "%-14s %s, %s, %s\n", "",
-			plural(len(goal.Tasks), "task"), plural(s.Turns, "prompt"), hours(s.ActiveMinutes))
-
-		if s.Churn > 1 {
-			// The count says the file was returned to; the lines say whether
-			// that meant a typo or a rewrite.
-			if s.LineChurn > 0 {
-				fmt.Fprintf(w, "%-14s kept coming back to %s (%d times, %d lines)\n", "",
-					baseName(s.ChurnFile), s.Churn, s.LineChurn)
-			} else {
-				fmt.Fprintf(w, "%-14s kept coming back to %s (%d times)\n", "",
-					baseName(s.ChurnFile), s.Churn)
-			}
-		}
-
-		for _, task := range goal.Tasks {
-			fmt.Fprintf(w, "\n  %s\n", task.Label)
-			fmt.Fprintf(w, "    %s", plural(task.Stats.Turns, "prompt"))
-			if task.Stats.Edits > 0 {
-				fmt.Fprintf(w, ", %s", plural(task.Stats.Edits, "change"))
-			}
-			if task.Stats.Errors > 0 {
-				fmt.Fprintf(w, ", %s", plural(task.Stats.Errors, "failure"))
-			}
-			fmt.Fprintln(w)
-
-			// What the work committed, so it can be checked against the
-			// repository. A commit whose hash could not be recovered still
-			// counts, since the fact of it is what says the work landed.
-			if n := len(task.Stats.Commits); n > 0 {
-				named := 0
-				for _, c := range task.Stats.Commits {
-					if c.SHA == "" {
-						continue
-					}
-					named++
-					if c.Subject != "" {
-						fmt.Fprintf(w, "    %s  %s\n", c.SHA, oneLine(c.Subject, subjectWidth))
-					} else {
-						fmt.Fprintf(w, "    %s\n", c.SHA)
-					}
-				}
-				if named == 0 {
-					fmt.Fprintf(w, "    %s\n", plural(n, "commit"))
-				}
-			}
-
-			if verbose {
-				for _, turn := range task.Turns {
-					// A turn another agent handed over has no prompt, so it is
-					// shown by its task's name, marked so it does not read as
-					// something the person typed.
-					said := turn.Text
-					if turn.Task != "" {
-						said = "task from an agent: " + turn.Task
-					}
-					fmt.Fprintf(w, "      %s  %s\n",
-						turn.At.Format("02 Jan 15:04"), oneLine(said, 60))
-					for _, d := range turn.Delegated {
-						fmt.Fprintf(w, "                      handed off: %s\n", handoff(d))
-					}
-				}
-			}
-		}
+		writeSitting(w, goal, mark(goal), verbose)
 	}
 
 	if len(g.Links) > 0 {
@@ -167,6 +99,114 @@ func WriteText(w io.Writer, g Graph, verbose bool, named func(agentID string) st
 		}
 	}
 	return nil
+}
+
+// writeSitting prints one sitting: its heading, marked with its agent's name
+// when mark is not empty, then its tasks.
+func writeSitting(w io.Writer, goal Goal, mark string, verbose bool) {
+	fmt.Fprintf(w, "\n%s\n", strings.Repeat("-", 72))
+	fmt.Fprintf(w, "%-14s %s%s\n", goal.Period, mark, goal.Label)
+
+	s := goal.Stats
+	fmt.Fprintf(w, "%-14s %s, %s, %s\n", "",
+		plural(len(goal.Tasks), "task"), plural(s.Turns, "prompt"), hours(s.ActiveMinutes))
+
+	if s.Churn > 1 {
+		// The count says the file was returned to; the lines say whether
+		// that meant a typo or a rewrite.
+		if s.LineChurn > 0 {
+			fmt.Fprintf(w, "%-14s kept coming back to %s (%d times, %d lines)\n", "",
+				baseName(s.ChurnFile), s.Churn, s.LineChurn)
+		} else {
+			fmt.Fprintf(w, "%-14s kept coming back to %s (%d times)\n", "",
+				baseName(s.ChurnFile), s.Churn)
+		}
+	}
+
+	// What the sitting did in other projects, which belongs to neither
+	// project's diagram as its own but is part of what this sitting was.
+	for _, v := range goal.Elsewhere {
+		fmt.Fprintf(w, "%-14s also %s\n", "", DoneIn(v))
+	}
+
+	for _, task := range goal.Tasks {
+		fmt.Fprintf(w, "\n  %s\n", task.Label)
+		fmt.Fprintf(w, "    %s", plural(task.Stats.Turns, "prompt"))
+		if task.Stats.Edits > 0 {
+			fmt.Fprintf(w, ", %s", plural(task.Stats.Edits, "change"))
+		}
+		if task.Stats.Errors > 0 {
+			fmt.Fprintf(w, ", %s", plural(task.Stats.Errors, "failure"))
+		}
+		fmt.Fprintln(w)
+
+		// What the work committed, so it can be checked against the
+		// repository. A commit whose hash could not be recovered still
+		// counts, since the fact of it is what says the work landed.
+		if n := len(task.Stats.Commits); n > 0 {
+			named := 0
+			for _, c := range task.Stats.Commits {
+				if c.SHA == "" {
+					continue
+				}
+				named++
+				if c.Subject != "" {
+					fmt.Fprintf(w, "    %s  %s\n", c.SHA, oneLine(c.Subject, subjectWidth))
+				} else {
+					fmt.Fprintf(w, "    %s\n", c.SHA)
+				}
+			}
+			if named == 0 {
+				fmt.Fprintf(w, "    %s\n", plural(n, "commit"))
+			}
+		}
+
+		if verbose {
+			for _, turn := range task.Turns {
+				// A turn another agent handed over has no prompt, so it is
+				// shown by its task's name, marked so it does not read as
+				// something the person typed.
+				said := turn.Text
+				if turn.Task != "" {
+					said = "task from an agent: " + turn.Task
+				}
+				fmt.Fprintf(w, "      %s  %s\n",
+					turn.At.Format("02 Jan 15:04"), oneLine(said, 60))
+				for _, d := range turn.Delegated {
+					fmt.Fprintf(w, "                      handed off: %s\n", handoff(d))
+				}
+			}
+		}
+	}
+}
+
+// unread labels commits whose repository was not read: every hash among them
+// is whatever the transcript claimed.
+const unread = "as the transcript recorded them: the repository was not read"
+
+// DoneIn says what a sitting did in another family, for example "changed 12
+// files in site, 2 commits".
+//
+// [LAW:one-source-of-truth] The one wording of a visit. The text view prints
+// it and the page is handed it, so the terminal and the note beside a sitting
+// cannot put the same work two ways. The family is named by its directory's
+// base name, the files are counted rather than their edits, and commits whose
+// repository went unread are labelled the way the project's own are.
+func DoneIn(v Visit) string {
+	name := baseName(v.Path)
+	said := "changed " + plural(len(v.Files), "file") + " in " + name
+	switch {
+	case len(v.Commits) == 0:
+		return said
+	case len(v.Files) == 0:
+		said = plural(len(v.Commits), "commit") + " in " + name
+	default:
+		said += ", " + plural(len(v.Commits), "commit")
+	}
+	if !v.RepoRead {
+		said += ", " + unread
+	}
+	return said
 }
 
 // period finds how a goal is described, for referring to it in prose.

@@ -186,12 +186,15 @@ func (p page) with(s span) []byte {
 // with no second request to wait on, and a saved copy still works after the
 // process has gone.
 //
+// families are the families this server can build a page for, so the page
+// links to another family's page exactly when that page is there to open.
+//
 // The substitution is done by hand rather than with html/template. There are
 // four values, all of them produced here rather than supplied by anyone, and
 // the template package drags in reflection and the crypto tree behind its
 // contextual escaping. That cost eight megabytes of binary for four
 // replacements that need one escaping rule between them.
-func render(g graph.Graph, named func(agentID string) string) (page, error) {
+func render(g graph.Graph, named func(agentID string) string, families map[string]Build) (page, error) {
 	parts := map[string]string{}
 	for _, name := range []string{"index.html", "fonts.css", "bough.css", "layout.js", "bough.js"} {
 		body, err := readAsset(name)
@@ -204,6 +207,11 @@ func render(g graph.Graph, named func(agentID string) string) (page, error) {
 	data, err := json.Marshal(g)
 	if err != nil {
 		return page{}, fmt.Errorf("encoding the graph: %w", err)
+	}
+
+	elsewhere, err := json.Marshal(awayFrom(g, families))
+	if err != nil {
+		return page{}, fmt.Errorf("encoding the work done elsewhere: %w", err)
 	}
 
 	before, after, ok := strings.Cut(parts["index.html"], "{{.Range}}")
@@ -219,8 +227,43 @@ func render(g graph.Graph, named func(agentID string) string) (page, error) {
 		"{{.Layout}}", parts["layout.js"],
 		"{{.JS}}", parts["bough.js"],
 		"{{.Graph}}", escapeScript(string(data)),
+		"{{.Elsewhere}}", escapeScript(string(elsewhere)),
 	)
 	return page{before: replace.Replace(before), after: replace.Replace(after)}, nil
+}
+
+// away is what a page is told about its sittings' work in other families,
+// beside the graph that records the work.
+type away struct {
+	// Served holds the key of every family the sittings worked in whose page
+	// this server can build. A family missing from it is named on the page
+	// without a link, since a link there would open nothing.
+	Served map[string]bool `json:"served"`
+
+	// Said is each visit in words, by sitting and then by family: the same
+	// words the text view prints for it.
+	Said map[string]map[string]string `json:"said"`
+}
+
+// awayFrom is what g's page is told about work done elsewhere, when families
+// are the families this server can build.
+//
+// Worked out by the server rather than recorded in the graph. Whether a family
+// can be opened is a fact about this running server, not about the work, and
+// the wording is spelled by Go so the page and the terminal cannot disagree.
+func awayFrom(g graph.Graph, families map[string]Build) away {
+	a := away{Served: map[string]bool{}, Said: map[string]map[string]string{}}
+	for _, goal := range g.Goals {
+		said := map[string]string{}
+		for _, v := range goal.Elsewhere {
+			said[v.Family] = graph.DoneIn(v)
+			if _, ok := families[v.Family]; ok {
+				a.Served[v.Family] = true
+			}
+		}
+		a.Said[goal.ID] = said
+	}
+	return a
 }
 
 // agents is the key naming every agent whose history the page draws, one

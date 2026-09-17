@@ -40,6 +40,12 @@ func sample() graph.Graph {
 					{At: start.Add(time.Minute), Text: "keep going"},
 				},
 			}},
+			// Work in a family bough can open, and in a repository it has no
+			// history for.
+			Elsewhere: []graph.Visit{
+				{Family: "/work/second", Path: "/work/second", Files: []graph.FileCount{{Path: "/work/second/importer.go", Edits: 3}}, RepoRead: true},
+				{Family: "/work/unheard", Path: "/work/unheard", Commits: []graph.Commit{{SHA: "abc1234"}}},
+			},
 		}},
 		Totals: graph.Stats{Turns: 2},
 	}
@@ -221,6 +227,28 @@ func inlined(t *testing.T, body string) graph.Graph {
 	return parsed
 }
 
+// elsewhereIn is what a page was told about work done in other families,
+// failing the test when it was told nothing.
+func elsewhereIn(t *testing.T, body string) away {
+	t.Helper()
+	const marker = "window.BOUGH_ELSEWHERE = "
+	i := strings.Index(body, marker)
+	if i < 0 {
+		t.Fatal("the work done elsewhere was not inlined")
+	}
+	rest := body[i+len(marker):]
+	end := strings.Index(rest, ";</script>")
+	if end < 0 {
+		t.Fatal("could not find the end of the inlined work done elsewhere")
+	}
+
+	var parsed away
+	if err := json.Unmarshal([]byte(rest[:end]), &parsed); err != nil {
+		t.Fatalf("the inlined work done elsewhere is not valid JSON: %v", err)
+	}
+	return parsed
+}
+
 func TestServesTheArtwork(t *testing.T) {
 	url := start(t, sample())
 
@@ -293,8 +321,16 @@ func TestPromptsCannotBreakOutOfTheScript(t *testing.T) {
 	// Along with the placeholder the date range goes in, which a prompt can
 	// hold as easily as any other text.
 	g.Goals[0].Tasks[0].Turns[1].Text = `{{.Range}}`
+	// A family is known by a directory, whose name can hold the same text. It
+	// reaches the page as a key the server can open and in the words for the
+	// work done there.
+	hostile := `/work/</script><script>alert(2)</script>`
+	g.Goals[0].Elsewhere = []graph.Visit{{Family: hostile, Path: `/work/x</script><script>alert(3)</script>`, Commits: []graph.Commit{{SHA: "abc1234"}}, RepoRead: true}}
 
-	base, built := site(t, g, map[string]Build{"/work/other": func() (graph.Graph, error) { return g, nil }})
+	base, built := site(t, g, map[string]Build{
+		"/work/other": func() (graph.Graph, error) { return g, nil },
+		hostile:       func() (graph.Graph, error) { return g, nil },
+	})
 	for what, page := range map[string]string{
 		"the first page":     body(t, base+"/?from=2026-08-01", http.StatusOK),
 		"a family asked for": opened(t, base, built, "/work/other", "&from=2026-08-01"),
@@ -317,6 +353,10 @@ func TestPromptsCannotBreakOutOfTheScript(t *testing.T) {
 		}
 		if n := strings.Count(page, `"from":"2026-08-01"`); n != 1 {
 			t.Errorf("%s: the range appears %d times, want once", what, n)
+		}
+		// And the family's key and its words survive as written.
+		if a := elsewhereIn(t, page); !a.Served[hostile] || a.Said["g1"][hostile] != graph.DoneIn(g.Goals[0].Elsewhere[0]) {
+			t.Errorf("%s: the family holding markup came out as %+v", what, a)
 		}
 	}
 }
