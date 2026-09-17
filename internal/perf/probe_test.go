@@ -51,8 +51,11 @@ func TestProbeRecordsWhatParses(t *testing.T) {
 	if !near(s.Refresh, 16667*time.Microsecond) {
 		t.Errorf("refresh %v, want the stand-in's 16.667ms", s.Refresh)
 	}
-	if s.Missed != 0 || s.Frames != 10 {
-		t.Errorf("%d frames with %d missed, want 10 with none", s.Frames, s.Missed)
+	// The stand-in's last input is stamped after the frame that dispatches it,
+	// and the frame that draws it runs 300ms long: the probe has to wait past
+	// both, and those 300ms are 18 frames missed.
+	if s.Missed != 18 || s.Frames != 13 {
+		t.Errorf("%d frames with %d missed, want 13 with 18", s.Frames, s.Missed)
 	}
 
 	// A probe that kept listening or kept asking for frames would go on
@@ -80,14 +83,14 @@ globalThis.requestAnimationFrame = (fn) => pending.push(fn);
 eval(fs.readFileSync(process.argv[2], "utf8"));
 
 let now = 1000;
-function frame() {
-  now += 16.667;
+function frame(extra = 0) {
+  now += 16.667 + extra;
   const due = pending;
   pending = [];
   due.forEach((fn) => fn(now));
 }
-function input(name) {
-  (listeners[name] || []).forEach((fn) => fn({ timeStamp: now + 3 }));
+function input(name, after = 3) {
+  (listeners[name] || []).forEach((fn) => fn({ timeStamp: now + after }));
 }
 
 let ready = false;
@@ -102,11 +105,17 @@ for (let i = 0; i < 10; i++) {
   frame();
 }
 
+// Stamped later than the next frame starts, as Chrome can report a wheel it
+// dispatches at the start of a frame.
+input("keydown", 20);
+
 let recording = null;
 window.__boughProbe.finish((r) => { recording = r; });
 for (let i = 0; !recording; i++) {
   if (i > 5) throw new Error("the probe never finished");
-  frame();
+  // The second frame after is the first at or after the keydown, so the one
+  // after that is late by however long drawing the keydown took.
+  frame(i === 2 ? 300 : 0);
 }
 
 console.log(JSON.stringify({

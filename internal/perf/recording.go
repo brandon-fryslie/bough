@@ -26,7 +26,8 @@ const Quiet = 30
 
 // Recording is what the probe saw during one scenario, checked. It is only
 // made by ParseRecording, so every Recording has frames in order, at least
-// Quiet intervals before the first input, and a frame after the last.
+// Quiet intervals before the first input, and two frames at or after the last:
+// the one that handled it and the one whose start shows it drawn.
 type Recording struct {
 	frames []time.Duration
 	inputs []time.Duration
@@ -71,8 +72,10 @@ func ParseRecording(raw []byte) (Recording, error) {
 	if quiet := countBefore(frames, inputs[0]) - 1; quiet < Quiet {
 		return Recording{}, fmt.Errorf("%d quiet frame intervals before the first input, want at least %d", max(quiet, 0), Quiet)
 	}
-	if last := inputs[len(inputs)-1]; frames[len(frames)-1] <= last {
-		return Recording{}, fmt.Errorf("no frame after the last input at %v, so its work was never seen drawn", last)
+	// [LAW:one-source-of-truth] the probe's finish stops on this same count;
+	// its contract test holds the two together.
+	if last := inputs[len(inputs)-1]; len(frames)-countBefore(frames, last) < 2 {
+		return Recording{}, fmt.Errorf("fewer than two frames at or after the last input at %v, so its work was never seen drawn", last)
 	}
 
 	return Recording{frames: frames, inputs: inputs}, nil

@@ -30,24 +30,19 @@ type Summary struct {
 
 // Summarize judges a recording.
 //
-// The frames that count are those whose interval overlapped the input: from
-// the interval that ended at or after the first input to the one that began at
-// or before the last. A ParseRecording guarantees at least one, since a frame
-// always follows the last input.
+// A frame's time is when it starts, so the interval beginning at a frame is
+// what that frame cost. The intervals that count run from the one spanning the
+// first input to the one beginning at the first frame at or after the last
+// input, which is the frame that handled it. The quiet intervals are those
+// ended before any input. ParseRecording guarantees both are there.
 func Summarize(r Recording) Summary {
-	first, last := r.inputs[0], r.inputs[len(r.inputs)-1]
+	first := countBefore(r.frames, r.inputs[0])
+	handled := countBefore(r.frames, r.inputs[len(r.inputs)-1])
 
-	var quiet, busy []time.Duration
-	for i := 1; i < len(r.frames); i++ {
-		start, end := r.frames[i-1], r.frames[i]
-		gap := end - start
-		switch {
-		case end < first:
-			quiet = append(quiet, gap)
-		case start <= last:
-			busy = append(busy, gap)
-		}
-	}
+	// [LAW:dataflow-not-control-flow] which intervals count is where the
+	// slices are cut, not a decision made per interval.
+	quiet := gaps(r.frames[:first])
+	busy := gaps(r.frames[first-1 : handled+2])
 
 	refresh := percentile(quiet, 0.5)
 	missed := 0
@@ -63,6 +58,15 @@ func Summarize(r Recording) Summary {
 		Worst:   slices.Max(busy),
 		Missed:  missed,
 	}
+}
+
+// gaps is the interval between each frame and the next.
+func gaps(frames []time.Duration) []time.Duration {
+	out := make([]time.Duration, 0, max(len(frames)-1, 0))
+	for i := 1; i < len(frames); i++ {
+		out = append(out, frames[i]-frames[i-1])
+	}
+	return out
 }
 
 // percentile is the nearest-rank percentile: the smallest value at least a

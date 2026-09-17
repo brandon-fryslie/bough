@@ -82,9 +82,20 @@ func TestAnIdlePageMissesNothing(t *testing.T) {
 	if !near(s.Median, s.Refresh) || !near(s.P95, s.Refresh) || !near(s.Worst, s.Refresh) {
 		t.Errorf("median %v, p95 %v, worst %v; want each at the refresh interval", s.Median, s.P95, s.Worst)
 	}
-	// Intervals ending at frames 36 through 46 overlap inputs at frames 35 and 45.
-	if s.Frames != 11 {
-		t.Errorf("%d frames overlapped the input, want 11", s.Frames)
+	// Inputs just after frames 35 and 45 are drawn by the intervals beginning at
+	// frames 35 through 46.
+	if s.Frames != 12 {
+		t.Errorf("%d frames judged, want 12", s.Frames)
+	}
+}
+
+// A frame's cost shows only when the next one starts, so the last input is
+// judged by the interval after the frame that handled it, not left out.
+func TestTheLastInputIsJudgedByTheFrameThatDrewIt(t *testing.T) {
+	s := page{interval: 16.667, frames: 60, late: map[int]float64{47: 300}}.with(2, 35, 45).summary(t)
+
+	if s.Missed != 18 {
+		t.Errorf("missed %d, want the 18 lost to drawing the last input", s.Missed)
 	}
 }
 
@@ -108,7 +119,7 @@ func TestAStalledFrameCountsWhatItMissed(t *testing.T) {
 // a fixed 16.7ms budget would call perfect.
 func TestFramesAreJudgedAgainstTheBrowsersOwnRate(t *testing.T) {
 	late := map[int]float64{}
-	for i := 36; i <= 46; i++ {
+	for i := 36; i <= 47; i++ {
 		late[i] = 8.333
 	}
 	s := page{interval: 8.333, frames: 60, late: late}.with(1, 35, 45).summary(t)
@@ -116,9 +127,9 @@ func TestFramesAreJudgedAgainstTheBrowsersOwnRate(t *testing.T) {
 	if !near(s.Refresh, 8333*time.Microsecond) {
 		t.Errorf("refresh %v, want 8.333ms", s.Refresh)
 	}
-	// Eleven intervals overlap the input, each twice the resting interval.
-	if s.Missed != 11 {
-		t.Errorf("missed %d, want 11: one per interval drawn at half the rate", s.Missed)
+	// Twelve intervals draw the input, each twice the resting interval.
+	if s.Missed != 12 {
+		t.Errorf("missed %d, want 12: one per interval drawn at half the rate", s.Missed)
 	}
 }
 
@@ -148,6 +159,7 @@ func TestParseRefusesWhatNoProbeProduces(t *testing.T) {
 		{"no input", string(quiet.raw(t))},
 		{"too few quiet frames", string(quiet.with(2, 10).raw(t))},
 		{"no frame after the last input", string(quiet.with(2, 59).raw(t))},
+		{"no frame to show the last input drawn", string(quiet.with(2, 58).raw(t))},
 		{"inputs out of order", string(quiet.with(2, 40, 35).raw(t))},
 	} {
 		if _, err := ParseRecording([]byte(c.raw)); err == nil {
