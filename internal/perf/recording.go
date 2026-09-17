@@ -26,13 +26,14 @@ var Probe string
 const Quiet = 30
 
 // Recording is what the probe saw during one scenario, checked. It is only
-// made by ParseRecording, so every Recording has frames and inputs in order of
-// their times, at least Quiet intervals before the first input, and two frames
-// at or after the last: the one that handled it and the one whose start shows
-// it drawn.
+// made by ParseRecording, so every Recording has frames in order of their
+// start times, and inputs, each the index of the frame that drew it, in the
+// order they arrived: the first drawn after at least Quiet intervals, and the
+// last drawn early enough that the next frame's start shows what drawing it
+// cost.
 type Recording struct {
 	frames []time.Duration
-	inputs []time.Duration
+	inputs []int
 }
 
 // ParseRecording checks what the probe handed back and keeps it as a
@@ -42,67 +43,63 @@ func ParseRecording(raw []byte) (Recording, error) {
 	// null, which would otherwise arrive here as a plausible zero.
 	var wire struct {
 		Frames []*float64 `json:"frames"`
-		Inputs []*float64 `json:"inputs"`
+		Inputs []*int     `json:"inputs"`
 	}
 	if err := json.Unmarshal(raw, &wire); err != nil {
 		return Recording{}, fmt.Errorf("reading the probe's recording: %w", err)
 	}
 
-	frames, err := times(wire.Frames)
+	ms, err := present(wire.Frames)
 	if err != nil {
 		return Recording{}, fmt.Errorf("frame times: %w", err)
 	}
-	inputs, err := times(wire.Inputs)
+	inputs, err := present(wire.Inputs)
 	if err != nil {
-		return Recording{}, fmt.Errorf("input times: %w", err)
+		return Recording{}, fmt.Errorf("inputs: %w", err)
 	}
 
+	frames := make([]time.Duration, len(ms))
+	for i, m := range ms {
+		frames[i] = time.Duration(math.Round(m * float64(time.Millisecond)))
+	}
 	for i := 1; i < len(frames); i++ {
 		if frames[i] <= frames[i-1] {
 			return Recording{}, fmt.Errorf("frame %d at %v does not follow frame %d at %v", i, frames[i], i-1, frames[i-1])
 		}
 	}
-	// [LAW:parse-dont-validate] the probe notes input on the page clock as it
-	// arrives, and that clock never goes back, so disorder is a broken probe.
+	// [LAW:parse-dont-validate] the probe notes each input as the count of
+	// frames started so far, which only grows.
 	if !slices.IsSorted(inputs) {
-		return Recording{}, errors.New("inputs are not in the order of their times, which the page clock cannot produce")
+		return Recording{}, errors.New("inputs are drawn by frames out of the order they arrived in, which the probe cannot note")
 	}
 
 	if len(inputs) == 0 {
 		return Recording{}, errors.New("no input reached the page, so there is nothing to judge")
 	}
-	if quiet := countBefore(frames, inputs[0]) - 1; quiet < Quiet {
+	if quiet := inputs[0] - 1; quiet < Quiet {
 		return Recording{}, fmt.Errorf("%d quiet frame intervals before the first input, want at least %d", max(quiet, 0), Quiet)
 	}
 	// [LAW:one-source-of-truth] the probe's finish stops on this same count;
 	// its contract test holds the two together.
-	if last := inputs[len(inputs)-1]; len(frames)-countBefore(frames, last) < 2 {
-		return Recording{}, fmt.Errorf("fewer than two frames at or after the last input at %v, so its work was never seen drawn", last)
+	if last := inputs[len(inputs)-1]; last+2 > len(frames) {
+		return Recording{}, fmt.Errorf("the last input is drawn by frame %d of %d, so no frame after it shows what drawing it cost", last, len(frames))
 	}
 
 	return Recording{frames: frames, inputs: inputs}, nil
 }
 
-// times turns the page's milliseconds into durations.
-func times(ms []*float64) ([]time.Duration, error) {
-	out := make([]time.Duration, len(ms))
-	for i, m := range ms {
-		if m == nil {
-			return nil, fmt.Errorf("time %d is missing", i)
+// present is the values the page wrote, refusing any it left out and any
+// below zero, which neither a clock reading nor a count can be.
+func present[T int | float64](values []*T) ([]T, error) {
+	out := make([]T, len(values))
+	for i, v := range values {
+		if v == nil {
+			return nil, fmt.Errorf("value %d is missing", i)
 		}
-		if *m < 0 {
-			return nil, fmt.Errorf("time %d, %v, is not on the page's clock", i, *m)
+		if *v < 0 {
+			return nil, fmt.Errorf("value %d, %v, is below zero", i, *v)
 		}
-		out[i] = time.Duration(math.Round(*m * float64(time.Millisecond)))
+		out[i] = *v
 	}
 	return out, nil
-}
-
-// countBefore is how many frames started before t.
-func countBefore(frames []time.Duration, t time.Duration) int {
-	n := 0
-	for n < len(frames) && frames[n] < t {
-		n++
-	}
-	return n
 }

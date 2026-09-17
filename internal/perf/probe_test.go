@@ -68,41 +68,40 @@ func TestProbeRecordsWhatParses(t *testing.T) {
 	if !near(s.Refresh, 16667*time.Microsecond) {
 		t.Errorf("refresh %v, want the stand-in's 16.667ms", s.Refresh)
 	}
-	// The frame after the one that handles the stand-in's last input runs 300ms
-	// long: the probe has to wait past it, and those 300ms are 18 frames missed.
+	// The frame that draws the stand-in's last input runs 300ms long: the probe
+	// has to wait for the frame after it and no longer, and those 300ms are 18
+	// frames missed.
 	if s.Missed != 18 || s.Frames != 12 {
 		t.Errorf("%d frames with %d missed, want 12 with 18", s.Frames, s.Missed)
 	}
 }
 
 // standInPage is the least of a browser the probe needs: a window to listen
-// on, a page clock, frames that advance it by hand, and input dispatched
-// between frames. Its events carry a timeStamp from no clock at all, as
-// Safari's can, so a probe trusting it would not parse. It prints the
-// recording and what the probe left behind.
+// on, frames started by hand, and input dispatched either between frames or
+// inside one before its callbacks, as Chrome hands a frame its wheel turns.
+// It has no clock, and its events carry a timeStamp from none, so a probe
+// that read a time would not run. It prints the recording and what the probe
+// left behind.
 const standInPage = `
 const fs = require("fs");
 const listeners = {};
 let pending = [];
-let clock = 1000;
 globalThis.window = {
-  performance: { now: () => clock },
   addEventListener(name, fn) { (listeners[name] = listeners[name] || []).push(fn); },
   removeEventListener(name, fn) { listeners[name] = (listeners[name] || []).filter((f) => f !== fn); },
 };
 globalThis.requestAnimationFrame = (fn) => pending.push(fn);
 eval(fs.readFileSync(process.argv[2], "utf8"));
 
-let now = clock;
-function frame(extra = 0) {
+let now = 1000;
+function frame(extra = 0, handed = () => {}) {
   now += 16.667 + extra;
-  clock = now;
   const due = pending;
   pending = [];
+  handed();
   due.forEach((fn) => fn(now));
 }
-function input(name, after = 3) {
-  clock = now + after;
+function input(name) {
   (listeners[name] || []).forEach((fn) => fn({ timeStamp: 0 }));
 }
 
@@ -125,17 +124,19 @@ for (let i = 0; i < 10; i++) {
   frame();
 }
 
-// Text typed without a key, late in the frame, is the latest input.
-input("pointermove", 1);
-input("input", 14);
+// Text typed without a key arrives between frames, and a wheel turn handed to
+// the next frame is the latest input, drawn by that same frame.
+input("input");
+frame(0, () => input("wheel"));
 
 let recording = null;
 window.__boughProbe.finish((r) => { recording = r; });
 for (let i = 0; !recording; i++) {
   if (i > 5) throw new Error("the probe never finished");
-  // The next frame handles the typing, so the one after that is late by
-  // however long drawing it took.
-  frame(i === 1 ? 300 : 0);
+  // The frame after the wheel turn's starts late by however long drawing it
+  // took. Whatever keeps the page busy after that is none of the input's
+  // doing, and a probe that waited for it would count it.
+  frame(i === 0 ? 300 : 100);
 }
 
 let again = null;

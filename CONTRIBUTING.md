@@ -19,8 +19,8 @@ Driving a real browser is never assumed, because it opens a window and needs
 the browser's driver. `go test ./internal/webdriver -browsers=chrome,safari`
 asks for it: Chrome needs the chromedriver matching its version on `PATH`, and
 Safari needs Settings > Developer > Allow remote automation turned on. Safari's
-driver drops most of the input it is sent, so in Safari only the page clock is
-checked, and the input checks are skipped with that reason.
+driver drops most of the input it is sent, so in Safari only that the page
+draws frames is checked, and the input checks are skipped with that reason.
 
 Run `make lint test` before opening a pull request. CI runs the same commands
 on Linux, macOS and Windows.

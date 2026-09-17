@@ -31,9 +31,8 @@ type driven struct {
 var known = map[string]driven{
 	"chrome": {browser: Chrome()},
 	// Seen in Safari 26.3 on macOS 26.3: most wheel steps in an action sequence reach
-	// the page as no event, sequences after the first in a session reach it as
-	// nothing, and the events that do arrive are stamped on another clock.
-	// Measuring Safari needs input from outside its driver.
+	// the page as no event, and sequences after the first in a session reach it
+	// as nothing. Measuring Safari needs input from outside its driver.
 	"safari": {browser: Safari(), untrusted: "safaridriver drops most of the input it is sent"},
 }
 
@@ -49,24 +48,28 @@ for (const name of ["pointerdown", "pointermove", "pointerup", "wheel"]) {
 }
 </script>`
 
-// read hands back what the page saw, with the start time of the next frame
-// and the page clock just after, both taken inside that frame.
+// read hands back what the page saw, once a frame has started since the input.
 const read = `const done = arguments[arguments.length - 1];
-requestAnimationFrame((frame) => done({ seen: window.seen, frame: frame, now: performance.now() }));`
+requestAnimationFrame(() => done(window.seen));`
 
-type seen struct {
-	Seen []struct {
-		Type    string  `json:"type"`
-		Trusted bool    `json:"trusted"`
-		DeltaY  float64 `json:"deltaY"`
-	} `json:"seen"`
-	Frame float64 `json:"frame"`
-	Now   float64 `json:"now"`
+type seen []struct {
+	Type    string  `json:"type"`
+	Trusted bool    `json:"trusted"`
+	DeltaY  float64 `json:"deltaY"`
 }
 
-// A real browser loads a page, runs scripts in it, and keeps the one clock the
-// probe times frames and input by. Where its driver's input can be trusted,
-// that input reaches the page and the probe records it.
+// frames hands back the start times of the next twenty frames.
+const frames = `const done = arguments[arguments.length - 1];
+const started = [];
+requestAnimationFrame(function tick(t) {
+  started.push(t);
+  if (started.length < 20) requestAnimationFrame(tick);
+  else done(started);
+});`
+
+// A real browser loads a page, runs scripts in it, and draws frames at a live
+// rate. Where its driver's input can be trusted, that input reaches the page
+// and the probe records it.
 func TestRealBrowsers(t *testing.T) {
 	if *browsers == "" {
 		t.Skip("no -browsers to drive")
@@ -88,7 +91,7 @@ func TestRealBrowsers(t *testing.T) {
 			// One session a browser, because Safari allows only one at a time.
 			s := open(ctx, t, d.browser)
 
-			t.Run("clock", framesAndInputShareAClock(ctx, s, site.URL))
+			t.Run("frames", framesKeepComing(ctx, s, site.URL))
 			t.Run("input", d.withInput(inputReachesThePage(ctx, s, site.URL)))
 			t.Run("probe", d.withInput(probeRecordsIt(ctx, s, site.URL)))
 		})
@@ -150,16 +153,28 @@ func see(ctx context.Context, t *testing.T, s *Session, url string, a Actions) s
 	return got
 }
 
-// performance.now, which the probe reads when input reaches the page, reads
-// the clock a frame's start is given on. Event timestamps are not used, and
-// not checked: Safari stamps the input it is driven with on some other clock.
-func framesAndInputShareAClock(ctx context.Context, s *Session, url string) func(*testing.T) {
+// The driven window draws as a window in front does. One the browser counts
+// as hidden or in the background draws few frames or none, and the probe
+// would judge that as the page's own stutter.
+func framesKeepComing(ctx context.Context, s *Session, url string) func(*testing.T) {
 	return func(t *testing.T) {
-		got := see(ctx, t, s, url, Actions{Mouse: []MouseStep{Pause(0)}})
-		if lag := got.Now - got.Frame; lag < -1 || lag > 1000 {
-			t.Errorf("frame started %.1f but the clock read %.1f inside it: not one clock", got.Frame, got.Now)
+		if err := s.Navigate(ctx, url); err != nil {
+			t.Fatal(err)
 		}
-		t.Logf("frame at %.1f, clock %.1f", got.Frame, got.Now)
+		raw, err := s.ExecuteAsync(ctx, frames)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var started []float64
+		if err := json.Unmarshal(raw, &started); err != nil {
+			t.Fatalf("reading the frame times: %v\n%s", err, raw)
+		}
+		// A window in front draws no slower than the 30 Hz Safari keeps to in Low
+		// Power Mode, and a throttled one far slower than this, when at all.
+		if each := (started[len(started)-1] - started[0]) / float64(len(started)-1); each > 100 {
+			t.Errorf("a frame every %.1fms, as a window the browser has throttled draws", each)
+		}
+		t.Logf("frames started %v", started)
 	}
 }
 
@@ -172,7 +187,7 @@ func inputReachesThePage(ctx context.Context, s *Session, url string) func(*test
 		})
 
 		types := map[string]int{}
-		for _, e := range got.Seen {
+		for _, e := range got {
 			types[e.Type]++
 			if !e.Trusted {
 				t.Errorf("%s was not trusted, so it came from script, not the browser's input", e.Type)
