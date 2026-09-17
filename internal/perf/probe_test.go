@@ -68,17 +68,20 @@ func TestProbeRecordsWhatParses(t *testing.T) {
 	if !near(s.Refresh, 16667*time.Microsecond) {
 		t.Errorf("refresh %v, want the stand-in's 16.667ms", s.Refresh)
 	}
-	// The stand-in's last input is stamped after the frame that dispatches it,
-	// and the frame that draws it runs 300ms long: the probe has to wait past
-	// both, and those 300ms are 18 frames missed.
-	if s.Missed != 18 || s.Frames != 13 {
-		t.Errorf("%d frames with %d missed, want 13 with 18", s.Frames, s.Missed)
+	// The frame that draws the stand-in's last input runs 300ms long: the probe
+	// has to wait for the frame after it and no longer, and those 300ms are 18
+	// frames missed.
+	if s.Missed != 18 || s.Frames != 12 {
+		t.Errorf("%d frames with %d missed, want 12 with 18", s.Frames, s.Missed)
 	}
 }
 
 // standInPage is the least of a browser the probe needs: a window to listen
-// on, a frame clock that advances by hand, and input dispatched between
-// frames. It prints the recording and what the probe left behind.
+// on, frames started by hand, and input dispatched either between frames or
+// inside one before its callbacks, as Chrome hands a frame its wheel turns.
+// It has no clock, and its events carry a timeStamp from none, so a probe
+// that read a time would not run. It prints the recording and what the probe
+// left behind.
 const standInPage = `
 const fs = require("fs");
 const listeners = {};
@@ -91,14 +94,15 @@ globalThis.requestAnimationFrame = (fn) => pending.push(fn);
 eval(fs.readFileSync(process.argv[2], "utf8"));
 
 let now = 1000;
-function frame(extra = 0) {
+function frame(extra = 0, handed = () => {}) {
   now += 16.667 + extra;
   const due = pending;
   pending = [];
+  handed();
   due.forEach((fn) => fn(now));
 }
-function input(name, after = 3) {
-  (listeners[name] || []).forEach((fn) => fn({ timeStamp: now + after }));
+function input(name) {
+  (listeners[name] || []).forEach((fn) => fn({ timeStamp: 0 }));
 }
 
 // A recording abandoned partway, as a driver that gave up on a scenario would
@@ -120,19 +124,19 @@ for (let i = 0; i < 10; i++) {
   frame();
 }
 
-// Text typed without a key, stamped later than the next frame starts, as Chrome
-// can report a wheel it dispatches at the start of a frame, and followed by an
-// event stamped earlier.
-input("input", 20);
-input("pointermove", 1);
+// Text typed without a key arrives between frames, and a wheel turn handed to
+// the next frame is the latest input, drawn by that same frame.
+input("input");
+frame(0, () => input("wheel"));
 
 let recording = null;
 window.__boughProbe.finish((r) => { recording = r; });
 for (let i = 0; !recording; i++) {
   if (i > 5) throw new Error("the probe never finished");
-  // The second frame after is the first at or after the typing, so the one
-  // after that is late by however long drawing it took.
-  frame(i === 2 ? 300 : 0);
+  // The frame after the wheel turn's starts late by however long drawing it
+  // took. Whatever keeps the page busy after that is none of the input's
+  // doing, and a probe that waited for it would count it.
+  frame(i === 0 ? 300 : 100);
 }
 
 let again = null;

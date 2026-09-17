@@ -31,18 +31,19 @@ type Summary struct {
 // Summarize judges a recording.
 //
 // A frame's time is when it starts, so the interval beginning at a frame is
-// what that frame cost. The intervals that count run from the one spanning the
-// first input to the one beginning at the first frame at or after the last
-// input, which is the frame that handled it. The quiet intervals are those
-// ended before any input. ParseRecording guarantees both are there.
+// what that frame cost. The intervals that count end with the one beginning at
+// the frame that drew the last input. They begin one before the frame that
+// drew the first: input a browser delivers between frames runs its handlers
+// there, while input delivered inside a frame, as Chrome does, leaves that
+// interval at rest. The quiet intervals are every one before those.
+// ParseRecording guarantees both are there.
 func Summarize(r Recording) Summary {
-	first := countBefore(r.frames, r.inputs[0])
-	handled := countBefore(r.frames, r.inputs[len(r.inputs)-1])
+	first, last := r.inputs[0], r.inputs[len(r.inputs)-1]
 
 	// [LAW:dataflow-not-control-flow] which intervals count is where the
 	// slices are cut, not a decision made per interval.
 	quiet := gaps(r.frames[:first])
-	busy := gaps(r.frames[first-1 : handled+2])
+	busy := gaps(r.frames[first-1 : last+2])
 
 	refresh := percentile(quiet, 0.5)
 	missed := 0
