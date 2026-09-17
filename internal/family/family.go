@@ -95,6 +95,9 @@ type Resolver struct {
 
 	disk Disk
 
+	// madeFor is every agent's reading of the directories it made.
+	madeFor []agent.MadeFor
+
 	// known is every project with history, by the normalised form of its path.
 	known map[string]*known
 }
@@ -109,20 +112,19 @@ type known struct {
 	// its agent's own form, which may keep what normalising folds away, so a
 	// record is asked about each of them and not only the one that came first.
 	spellings []string
-
-	serves []func(string) bool
 }
 
-// New resolves families with the repository consulted through disk.
-func New(projects []agent.Project, disk Disk) *Resolver {
-	return &Resolver{RepositoryConsulted: true, disk: disk, known: index(projects)}
+// New resolves families among the projects with history, from each agent's
+// record of the directories it made and the repository consulted through disk.
+func New(projects []agent.Project, madeFor []agent.MadeFor, disk Disk) *Resolver {
+	return &Resolver{RepositoryConsulted: true, disk: disk, madeFor: madeFor, known: index(projects)}
 }
 
 // WithoutRepository resolves families from the agents' records alone, for
 // --no-repo. A directory's own repository is never asked about, so a worktree
 // the agent did not mark as one stays its own family.
-func WithoutRepository(projects []agent.Project) *Resolver {
-	return &Resolver{disk: nowhere{}, known: index(projects)}
+func WithoutRepository(projects []agent.Project, madeFor []agent.MadeFor) *Resolver {
+	return &Resolver{disk: nowhere{}, madeFor: madeFor, known: index(projects)}
 }
 
 // nowhere is a disk with nothing on it, which is what --no-repo means here:
@@ -144,9 +146,6 @@ func index(projects []agent.Project) map[string]*known {
 		if !slices.Contains(k.spellings, p.Path) {
 			k.spellings = append(k.spellings, p.Path)
 		}
-		if p.Serves != nil {
-			k.serves = append(k.serves, p.Serves)
-		}
 	}
 	return byKey
 }
@@ -166,7 +165,7 @@ func (r *Resolver) Resolve(p string) Family {
 // absolute matches a path that starts at a root, unix or Windows.
 var absolute = regexp.MustCompile(`^(?:/|[A-Za-z]:/)`)
 
-// resolve carries the projects already followed through their records, so a
+// resolve carries the paths already followed through their records, so a
 // pair of directories each recorded as made for the other cannot chase one
 // another forever.
 func (r *Resolver) resolve(p string, followed map[string]bool) Family {
@@ -177,14 +176,8 @@ func (r *Resolver) resolve(p string, followed map[string]bool) Family {
 	// experiments, and nine on the history this was built against had a
 	// throwaway repository inside them; the record says whose work that was,
 	// where the repository would only say it was its own.
-	for dir := range ancestors(p) {
-		k, ok := r.known[agent.NormalisePath(dir)]
-		if !ok {
-			continue
-		}
-		if home, ok := r.recorded(k, followed); ok {
-			return Family{Name: home.Name, Evidence: Recorded}
-		}
+	if home, ok := r.recorded(p, followed); ok {
+		return Family{Name: home.Name, Evidence: Recorded}
 	}
 
 	// The repository is asked at the nearest directory that exists, and only
@@ -211,20 +204,25 @@ func (r *Resolver) resolve(p string, followed map[string]bool) Family {
 	return Family{Name: p, Evidence: None}
 }
 
-// recorded follows what the agent recorded about k: the one known project k
-// was made for, resolved in turn. A record that names no known project, or
-// more than one, since the form it is written in is lossy, is no record.
-func (r *Resolver) recorded(k *known, followed map[string]bool) (Family, bool) {
-	key := agent.NormalisePath(k.path)
+// recorded follows what the agents recorded in p: the one known project the
+// directory p lies in was made for, resolved in turn. A record that names no
+// known project, or more than one, since the form it is written in is lossy,
+// is no record.
+func (r *Resolver) recorded(p string, followed map[string]bool) (Family, bool) {
+	key := agent.NormalisePath(p)
 	if followed[key] {
 		return Family{}, false
 	}
 	followed[key] = true
 
 	matched := map[string]*known{}
-	for _, serves := range k.serves {
+	for _, madeFor := range r.madeFor {
+		serves := madeFor(p)
+		if serves == nil {
+			continue
+		}
 		for candidate, other := range r.known {
-			if candidate != key && slices.ContainsFunc(other.spellings, serves) {
+			if slices.ContainsFunc(other.spellings, serves) {
 				matched[candidate] = other
 			}
 		}

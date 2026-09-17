@@ -62,14 +62,52 @@ func worktreeOf(parent string) func(string) bool {
 	}
 }
 
-func project(path string, serves func(string) bool) agent.Project {
-	return agent.Project{Name: path[strings.LastIndex(path, "/")+1:], Path: path, Serves: serves}
+// fixture is a directory in the hand-written history: a project a session
+// started in, or a directory an agent made that no session started in, and
+// what the agent wrote into its path.
+type fixture struct {
+	path    string
+	serves  func(string) bool
+	history bool
+}
+
+func project(path string, serves func(string) bool) fixture {
+	return fixture{path: path, serves: serves, history: true}
+}
+
+func madeOnly(path string, serves func(string) bool) fixture {
+	return fixture{path: path, serves: serves}
+}
+
+func projectsOf(fs []fixture) []agent.Project {
+	var out []agent.Project
+	for _, f := range fs {
+		if f.history {
+			out = append(out, agent.Project{Name: f.path[strings.LastIndex(f.path, "/")+1:], Path: f.path})
+		}
+	}
+	return out
+}
+
+// recordsOf is one agent's reading of the directories it made: the record on
+// whichever fixture the path lies in.
+func recordsOf(fs []fixture) []agent.MadeFor {
+	return []agent.MadeFor{func(p string) func(string) bool {
+		p = agent.NormalisePath(p)
+		for _, f := range fs {
+			dir := agent.NormalisePath(f.path)
+			if f.serves != nil && (p == dir || strings.HasPrefix(p, dir+"/")) {
+				return f.serves
+			}
+		}
+		return nil
+	}}
 }
 
 // A history written by hand. The names are real projects; the paths and their
 // arrangement are the cases the rules have to hold for.
 var (
-	history = []agent.Project{
+	history = []fixture{
 		// Both have history and contain everything below them.
 		project("/Users/bmf", nil),
 		project("/Users/bmf/code", nil),
@@ -114,6 +152,13 @@ var (
 		// Two unrelated directories called docs.
 		project("/Users/bmf/code/docs", nil),
 		project("/Users/bmf/writing/docs", nil),
+
+		// Directories an agent made that no session started in: a scratchpad a
+		// session in happy wrote into, and a textual-js worktree since deleted.
+		madeOnly("/private/tmp/claude-501/-Users-bmf-code-happy/5e0c1a2b-7d3f-4e5a-9b8c-0d1e2f3a4b5c/scratchpad",
+			scratchpadFor("-Users-bmf-code-happy")),
+		madeOnly("/Users/bmf/code/textual-js/.claude/worktrees/brisk-dune",
+			worktreeOf("/Users/bmf/code/textual-js")),
 
 		// A deleted directory on a Windows drive, and a worktree made under it.
 		project(`D:\work\site\gone`, nil),
@@ -182,6 +227,9 @@ func TestResolve(t *testing.T) {
 		{"a file inside a scratchpad goes where the scratchpad goes, past a project that recorded nothing",
 			"/private/tmp/claude-501/-Users-bmf-code-textual-js/1d56911b-b2f0-46e1-96a3-e1622bc1875c/scratchpad/probe/x.go",
 			Family{"/Users/bmf/code/textual-js", Recorded}},
+		{"a file in a scratchpad no session started in goes to the scratchpad's project",
+			"/private/tmp/claude-501/-Users-bmf-code-happy/5e0c1a2b-7d3f-4e5a-9b8c-0d1e2f3a4b5c/scratchpad/probe.go",
+			Family{"/Users/bmf/code/happy", Recorded}},
 		{"a throwaway repository inside a scratchpad is still the scratchpad's project",
 			"/private/tmp/claude-501/-Users-bmf-code-textual-js/1d56911b-b2f0-46e1-96a3-e1622bc1875c/scratchpad/repro/x.go",
 			Family{"/Users/bmf/code/textual-js", Recorded}},
@@ -241,7 +289,7 @@ func TestResolve(t *testing.T) {
 			Family{".", None}},
 	}
 
-	r := New(history, disk{t: t, dirs: exists, repos: repos})
+	r := New(projectsOf(history), recordsOf(history), disk{t: t, dirs: exists, repos: repos})
 	if !r.RepositoryConsulted {
 		t.Fatal("a resolver given a disk should say the repository was consulted")
 	}
@@ -271,6 +319,9 @@ func TestResolveWithoutRepository(t *testing.T) {
 		{"a scratchpad naming that worktree follows it home",
 			"/private/tmp/claude-501/-Users-bmf-code-happy--claude-worktrees-calm-sparking-floyd/859818fc-1f79-47fa-9a8b-12b41eeb2b0e/scratchpad",
 			Family{"/Users/bmf/code/happy", Recorded}},
+		{"a deleted worktree no session started in still finds its project",
+			"/Users/bmf/code/textual-js/.claude/worktrees/brisk-dune/src/app.ts",
+			Family{"/Users/bmf/code/textual-js", Recorded}},
 		{"a subdirectory has no repository to share",
 			"/Users/bmf/code/textual-js/visual-tests",
 			Family{"/Users/bmf/code/textual-js/visual-tests", Project}},
@@ -279,7 +330,7 @@ func TestResolveWithoutRepository(t *testing.T) {
 			Family{"/Users/bmf/wt/low-talker-fix", Project}},
 	}
 
-	r := WithoutRepository(history)
+	r := WithoutRepository(projectsOf(history), recordsOf(history))
 	if r.RepositoryConsulted {
 		t.Fatal("a resolver without a repository should say so")
 	}
@@ -295,25 +346,26 @@ func TestResolveWithoutRepository(t *testing.T) {
 // One directory recorded under two spellings is asked about in both, so which
 // source came first cannot decide whether a record finds it.
 func TestResolveAsksARecordAboutEverySpelling(t *testing.T) {
-	scratchpad := project("/private/tmp/claude-501/D--work-site/1d56911b-b2f0-46e1-96a3-e1622bc1875c/scratchpad",
+	scratchpad := madeOnly("/private/tmp/claude-501/D--work-site/1d56911b-b2f0-46e1-96a3-e1622bc1875c/scratchpad",
 		scratchpadFor("D--work-site"))
-	for _, order := range [][]agent.Project{
+	for _, order := range [][]fixture{
 		{project("/d/work/site", nil), project(`D:\work\site`, nil), scratchpad},
 		{project(`D:\work\site`, nil), project("/d/work/site", nil), scratchpad},
 	} {
-		r := WithoutRepository(order)
-		if got := r.Resolve(scratchpad.Path); got.Evidence != Recorded {
-			t.Errorf("with %q first, the scratchpad resolved to %+v, want its project", order[0].Path, got)
+		r := WithoutRepository(projectsOf(order), recordsOf(order))
+		if got := r.Resolve(scratchpad.path); got.Evidence != Recorded {
+			t.Errorf("with %q first, the scratchpad resolved to %+v, want its project", order[0].path, got)
 		}
 	}
 }
 
 // Two directories recorded as made for each other must not chase one another.
 func TestResolveStopsFollowingACycle(t *testing.T) {
-	r := WithoutRepository([]agent.Project{
+	cycle := []fixture{
 		project("/a", worktreeOf("/b")),
 		project("/b", worktreeOf("/a")),
-	})
+	}
+	r := WithoutRepository(projectsOf(cycle), recordsOf(cycle))
 	// The record is followed once around and stops where it began.
 	if got := r.Resolve("/a"); got != (Family{"/a", Recorded}) {
 		t.Errorf("Resolve(/a) = %+v, want to end where it began", got)
@@ -322,7 +374,7 @@ func TestResolveStopsFollowingACycle(t *testing.T) {
 
 // One family is one key, however its members were reached.
 func TestKeyIsTheSameAcrossAFamily(t *testing.T) {
-	r := New(history, disk{t: t, dirs: exists, repos: repos})
+	r := New(projectsOf(history), recordsOf(history), disk{t: t, dirs: exists, repos: repos})
 	root := r.Resolve("/Users/bmf/code/textual-js").Key()
 	for _, member := range []string{
 		"/Users/bmf/code/textual-js/visual-tests",

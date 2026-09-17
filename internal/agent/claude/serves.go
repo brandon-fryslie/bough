@@ -28,9 +28,9 @@ var worktree = regexp.MustCompile(`^(.*)/\.claude/worktrees/[^/]+(?:/|$)`)
 // not a path.
 var mangle = regexp.MustCompile(`[^A-Za-z0-9]`)
 
-// serves is the record Claude Code left in a working directory of which
-// project it was made for, as a question about a candidate, or nil for a
-// directory that is a project in its own right.
+// serves is the record Claude Code left in the path of a directory it made of
+// which project that was for, as a question about a candidate, or nil for a
+// path in no such directory.
 func serves(path string) func(string) bool {
 	path = strings.ReplaceAll(path, `\`, "/")
 	if m := scratchpad.FindStringSubmatch(path); m != nil {

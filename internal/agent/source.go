@@ -42,7 +42,26 @@ type Agent struct {
 
 	// Open reads history kept under root.
 	Open func(root string) Source
+
+	// MadeFor reads which project a directory was made for, from the path the
+	// agent gave it. Every agent has one, and one that makes no directories on
+	// a project's behalf answers nil for every path.
+	MadeFor MadeFor
 }
+
+// MadeFor is what an agent wrote into the path of a directory it made on a
+// project's behalf, a scratchpad or a worktree, read back as a question about
+// candidate projects. The path may be anywhere inside such a directory. The
+// answer is nil for a path in no such directory, which is the ordinary case.
+//
+// It is a question rather than a path because the agent writes the project's
+// name in its own form, and Claude Code's form cannot be read back
+// (docs/format.md): a dash in the original is indistinguishable from a
+// separator. So the agent, which knows the form, is asked whether a candidate
+// matches, and the core compares candidates it knows about without learning
+// the form itself. More than one may match, and what that means is the core's
+// decision.
+type MadeFor func(path string) (project func(candidate string) bool)
 
 // Source reads one coding agent's history from one place.
 type Source interface {
@@ -81,20 +100,6 @@ type Project struct {
 	// than their contents. It says which projects are substantial, not how
 	// many prompts they hold.
 	Bytes int64
-
-	// Serves reports whether a path is the project this directory was made to
-	// work on. It is set for a directory the agent created on a project's
-	// behalf, a scratchpad or a worktree, and nil for a project in its own
-	// right, which is the ordinary case.
-	//
-	// It is a question rather than a path because the agent writes the
-	// project's name into such a directory in its own form, and Claude Code's
-	// form cannot be read back (docs/format.md): a dash in the original is
-	// indistinguishable from a separator. So the source, which knows the form,
-	// is asked whether a candidate matches, and the core compares candidates it
-	// already knows about without learning the form itself. More than one
-	// candidate may match, and what that means is the core's decision.
-	Serves func(path string) bool
 }
 
 // Session is one continuous stretch of work as the agent recorded it.

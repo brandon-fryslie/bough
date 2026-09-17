@@ -22,6 +22,7 @@ func Agent() agent.Agent {
 		Name:    "Claude Code",
 		History: filepath.Join(".claude", "projects"),
 		Open:    func(root string) agent.Source { return Source{Root: root} },
+		MadeFor: serves,
 	}
 }
 
@@ -74,7 +75,6 @@ func (s Source) Detect() ([]agent.Project, error) {
 			Ref:        dir,
 			LastWorked: last,
 			Bytes:      size,
-			Serves:     serves(path),
 		})
 	}
 	sort.Slice(projects, func(i, j int) bool { return projects[i].Name < projects[j].Name })

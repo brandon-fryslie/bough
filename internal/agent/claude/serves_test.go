@@ -1,8 +1,6 @@
 package claude
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -53,26 +51,11 @@ func TestServesIsNilForAProjectOfItsOwn(t *testing.T) {
 	}
 }
 
-// Detect carries the record out on the project it reports.
-func TestDetectRecordsWhichProjectAScratchpadServes(t *testing.T) {
-	root := t.TempDir()
-	dir := filepath.Join(root, "-private-tmp-claude-501--Users-bmf-code-happy-1d56911b-b2f0-46e1-96a3-e1622bc1875c-scratchpad")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	write(t, filepath.Join(dir, "1d56911b-b2f0-46e1-96a3-e1622bc1875c.jsonl"),
-		`{"uuid":"a","type":"user","promptId":"p1",`+
-			`"cwd":"/private/tmp/claude-501/-Users-bmf-code-happy/1d56911b-b2f0-46e1-96a3-e1622bc1875c/scratchpad",`+
-			`"message":{"role":"user","content":[{"type":"text","text":"text-a1b2"}]}}`)
-
-	projects, err := Source{Root: root}.Detect()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(projects) != 1 || projects[0].Serves == nil {
-		t.Fatalf("got %d projects, want one that records its project", len(projects))
-	}
-	if !projects[0].Serves("/Users/bmf/code/happy") {
-		t.Error("the scratchpad should say it serves the project its path names")
+// The agent hands the record to the core, and a project it detects carries
+// nothing agent-specific.
+func TestAgentReadsWhichProjectADirectoryWasMadeFor(t *testing.T) {
+	ask := Agent().MadeFor("/private/tmp/claude-501/-Users-bmf-code-happy/1d56911b-b2f0-46e1-96a3-e1622bc1875c/scratchpad/probe.go")
+	if ask == nil || !ask("/Users/bmf/code/happy") {
+		t.Error("a file in a scratchpad should name the project the scratchpad was made for")
 	}
 }
