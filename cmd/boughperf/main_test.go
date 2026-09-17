@@ -265,15 +265,26 @@ func TestAnInvocationThatMeasuresNothingFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("kept nothing: %v", err)
 	}
-	var raw map[string]any
-	if err := json.Unmarshal(body, &raw); err != nil {
+	var kept results
+	if err := json.Unmarshal(body, &kept); err != nil {
+		t.Fatalf("the kept results did not read back: %v\n%s", err, body)
+	}
+	shape, err := synthetic.Sized("small")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if raw["graph"] != "synthetic small" || raw["revision"] == "" || raw["repeats"] != 2.0 {
-		t.Errorf("kept %s", body)
+	measured, err := fingerprint("synthetic small", synthetic.History(shape))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(string(body), `"skipped"`) || !strings.Contains(stdout.String(), "safari: skipped") {
-		t.Errorf("kept %s and printed %q, want safari skipped in both", body, stdout.String())
+	if kept.Graph != measured || kept.Revision == "" || kept.Repeats != 2 {
+		t.Errorf("kept %s, want the graph fingerprinted as %+v", body, measured)
+	}
+	if len(kept.Browsers) != 1 || kept.Browsers[0] != (skipped{Browser: "safari", Skipped: "safaridriver drops most of the input it is sent"}) {
+		t.Errorf("kept browsers %+v, want safari skipped", kept.Browsers)
+	}
+	if !strings.Contains(stdout.String(), "safari: skipped") {
+		t.Errorf("printed %q, want safari skipped", stdout.String())
 	}
 }
 

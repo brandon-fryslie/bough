@@ -39,6 +39,9 @@ reach the page is skipped, with why.
 Exit status is 0 when every run recorded and at least one did, 1 when any run
 or browser failed or nothing was measured, and 2 when the flags are wrong.
 
+boughperf compare before.json after.json says what changed between two kept
+runs, beyond the spread of their repeats.
+
 `
 
 // The exit statuses usage promises.
@@ -57,7 +60,16 @@ const (
 )
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(command(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+// command measures, or compares two kept runs when its first argument is
+// compare.
+func command(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "compare" {
+		return compareRuns(args[1:], stdout, stderr)
+	}
+	return run(args, stdout, stderr)
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
@@ -89,12 +101,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "boughperf:", err)
 		return someFailed
 	}
+	measuring, err := fingerprint(p.history.name, g)
+	if err != nil {
+		fmt.Fprintln(stderr, "boughperf:", err)
+		return someFailed
+	}
 
 	// No interrupt is caught: the terminal interrupts the drivers too, so the
 	// windows could not be closed in order anyway, and a run cut short is not
 	// one to compare against.
 	ctx := context.Background()
-	r := results{Started: started, Revision: revision, Graph: p.history.name, Repeats: p.repeats}
+	r := results{Started: started, Revision: revision, Graph: measuring, Repeats: p.repeats}
 	err = serve(ctx, g, func(url string) {
 		for _, b := range browsers {
 			r.Browsers = append(r.Browsers, measure(ctx, b, url, p, stderr))

@@ -34,8 +34,16 @@ driver can stretch a gesture it was asked to play quickly. Every recording and
 its summary are kept in `perf-results/`, with the commit measured, and it exits
 non-zero when any run fails or nothing was measured.
 `go run ./cmd/boughperf -h` lists the rest, including `-graph` to measure a
-graph written by `bough --json`. One run is noisy, so compare repeated runs
-taken on the same machine.
+graph written by `bough --json`.
+
+One run is noisy, so claim a change by comparing repeated runs taken on the
+same machine: `go run ./cmd/boughperf compare before.json after.json` shows
+each metric as the middle of its runs with the least and most any run
+reached. It calls a change better or worse only when every run after is past
+every run before, which noise alone does less than once in a hundred
+comparisons, so it needs at least five runs a side, and only when a frame time
+moved by more than half a frame, since frame times jitter by less than that.
+It refuses runs of different graphs.
 
 Run `make lint test` before opening a pull request. CI runs the same commands
 on Linux, macOS and Windows.
