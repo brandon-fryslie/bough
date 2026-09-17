@@ -459,8 +459,15 @@ func ago(t time.Time) string {
 // it under, whichever spelling it was written in: the same normaliser the rest
 // of the tool compares paths with, which understands a transcript written on
 // Windows and read anywhere else.
+//
+// A relative path is taken from where bough was run, since that is where the
+// person typing it is: `bough .` is the project they are standing in.
 func byPath(projects []family.Project, families *family.Resolver, path string) (family.Project, bool) {
-	want := families.Resolve(path)
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return family.Project{}, false
+	}
+	want := families.Resolve(abs)
 	for _, p := range projects {
 		if p.Is(want) {
 			return p, true

@@ -179,3 +179,30 @@ func (g graphJSON) touched(path string) bool {
 	}
 	return false
 }
+
+// A relative path is taken from where bough was run.
+func TestARelativePathOpensTheFamilyItIsIn(t *testing.T) {
+	base := t.TempDir()
+	// Resolved, since the temporary directory can sit behind a symlink.
+	base, err := filepath.EvalSymlinks(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	here := filepath.Join(base, "site.com")
+	if err := os.MkdirAll(here, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	sitting(t, root, filepath.ToSlash(here), 2, filepath.ToSlash(here)+"/index.html")
+	// A project whose name contains a dot, which "." would match by name.
+	sitting(t, root, "/work/other.git", 1, "/work/other.git/main.go")
+	t.Chdir(here)
+
+	var out, errs bytes.Buffer
+	if err := run([]string{".", "--json", "--no-repo", "--agent", "claude", "--root", root}, &out, &errs); err != nil {
+		t.Fatal(err)
+	}
+	if g := parsed(t, out.Bytes()); g.Project.Name != "site.com" {
+		t.Errorf("bough . opened %q, want the project it was run in", g.Project.Name)
+	}
+}
