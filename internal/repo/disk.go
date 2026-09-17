@@ -2,8 +2,6 @@ package repo
 
 import (
 	"os"
-	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 )
@@ -61,65 +59,29 @@ func (d *Disk) MainTree(dir string) string {
 
 // mainTree is the main working tree as git spells it.
 //
-// A checkout's own top level is that tree unless the checkout is a linked
-// worktree, which git shows by keeping its git directory apart from the common
-// one. Then the tree is the first entry git lists, which is the main tree in
-// the ordinary case and in two layouts is not a checkout at all.
-//
-// A bare repository lists itself, marked bare. It has no main tree, and its
-// checkouts are listed by name, not by age, so naming the family after one
-// would rename it whenever a worktree was added ahead of it alphabetically.
-// The repository itself is the one name that stays put.
-//
-// A submodule lists its git directory under .git/modules, which is nobody's
-// project; the checkout is the top level that directory is configured with.
-// A repository made with --separate-git-dir lists its git directory the same
-// way and records no checkout at all, so a linked worktree of it names no tree
-// and stands alone.
+// git lists a repository's main entry first, from anywhere in the repository:
+// a subdirectory, a linked worktree, inside the git directory itself. That
+// entry is a checkout in the ordinary case, and in three layouts it is the git
+// directory instead: a bare repository, a submodule, whose git directory sits
+// under .git/modules, and a repository made with --separate-git-dir. Asking
+// the entry for its top level answers all of them the same way. A checkout
+// answers with itself, a submodule's git directory with the checkout it is
+// configured for, and the other two have no checkout to name, so the entry
+// itself is the name: it is the repository, and it stays put however many
+// worktrees are added.
 func mainTree(dir string) string {
-	out, err := run(dir, "rev-parse", "--show-toplevel", "--git-dir", "--git-common-dir")
+	out, err := run(dir, "worktree", "list", "--porcelain")
 	if err != nil {
 		return ""
 	}
-	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	if len(lines) != 3 {
+	first, _, _ := strings.Cut(out, "\n")
+	entry, ok := strings.CutPrefix(first, "worktree ")
+	if !ok {
 		return ""
 	}
-	// Only the top level is always absolute; the two git directories are
-	// written relative to dir when they sit inside it.
-	top, gitDir, common := lines[0], resolved(dir, lines[1]), resolved(dir, lines[2])
-	if gitDir == common {
-		return top
-	}
-	out, err = run(dir, "worktree", "list", "--porcelain")
+	top, err := run(entry, "rev-parse", "--show-toplevel")
 	if err != nil {
-		return ""
+		return entry
 	}
-	main, _, _ := strings.Cut(out, "\n\n")
-	entry := strings.Split(main, "\n")
-	tree, _ := strings.CutPrefix(entry[0], "worktree ")
-	switch {
-	case slices.Contains(entry, "bare"):
-		return common
-	case resolved(dir, tree) == common:
-		out, err := run(common, "rev-parse", "--show-toplevel")
-		if err != nil {
-			return ""
-		}
-		return strings.TrimRight(out, "\n")
-	default:
-		return tree
-	}
-}
-
-// resolved is p, taken relative to dir, with every symlink resolved, so two
-// spellings git uses for one directory compare equal.
-func resolved(dir, p string) string {
-	if !filepath.IsAbs(p) {
-		p = filepath.Join(dir, p)
-	}
-	if r, err := filepath.EvalSymlinks(p); err == nil {
-		return r
-	}
-	return filepath.Clean(p)
+	return strings.TrimRight(top, "\n")
 }

@@ -189,6 +189,22 @@ func TestDiskNamesTheMainTree(t *testing.T) {
 	subLinked := filepath.Join(base, "sub-linked")
 	run(filepath.Join(main, "vendor", "sub"), "worktree", "add", "-q", subLinked, "-b", "sub-linked")
 
+	// A bare repository beside its checkouts, found through a .git file.
+	layout := filepath.Join(base, "layout")
+	run(base, "clone", "-q", "--bare", main, filepath.Join(layout, ".bare"))
+	if err := writeFile(layout, ".git", "gitdir: ./.bare\n"); err != nil {
+		t.Fatal(err)
+	}
+	run(filepath.Join(layout, ".bare"), "worktree", "add", "-q", filepath.Join(layout, "trunk"), "-b", "trunk")
+
+	// A repository whose git directory lives apart from its checkout.
+	separate := filepath.Join(base, "separate.git")
+	separateTree := filepath.Join(base, "separate")
+	run(base, "init", "-q", "--separate-git-dir", separate, separateTree)
+	run(separateTree, "commit", "-q", "--allow-empty", "-m", "Separate")
+	separateLinked := filepath.Join(base, "separate-linked")
+	run(separateTree, "worktree", "add", "-q", separateLinked, "-b", "separate-linked")
+
 	// The checkout reached through a symlink, the way /tmp is /private/tmp.
 	alias := filepath.Join(base, "alias")
 	if err := os.Symlink(main, alias); err != nil {
@@ -217,6 +233,11 @@ func TestDiskNamesTheMainTree(t *testing.T) {
 		{laterTree, resolved(bare)},
 		{filepath.Join(main, "vendor", "sub"), resolved(filepath.Join(main, "vendor", "sub"))},
 		{subLinked, resolved(filepath.Join(main, "vendor", "sub"))},
+		{filepath.Join(main, ".git", "hooks"), resolved(main)},
+		{layout, resolved(filepath.Join(layout, ".bare"))},
+		{filepath.Join(layout, "trunk"), resolved(filepath.Join(layout, ".bare"))},
+		{separateTree, resolved(separate)},
+		{separateLinked, resolved(separate)},
 	} {
 		if got := d.MainTree(c.dir); got != c.want {
 			t.Errorf("MainTree(%q) = %q, want %q", c.dir, got, c.want)
