@@ -1153,9 +1153,17 @@
 
   // within is a file's path from the project directory it was changed in,
   // and the whole path when it lies somewhere else.
+  //
+  // The two are compared with one separator and no case, as Go compares
+  // paths: Claude Code's files arrive lower-cased, while the directory keeps
+  // the case it has on disk. The file keeps the spelling it arrived in.
   function within(file, dir) {
-    var root = String(dir).replace(/[\\/]+$/, "") + "/";
-    return file.indexOf(root) === 0 ? file.slice(root.length) : file;
+    var root = comparable(dir).replace(/\/+$/, "") + "/";
+    return comparable(file).indexOf(root) === 0 ? file.slice(root.length) : file;
+  }
+
+  function comparable(path) {
+    return String(path).replace(/\\/g, "/").toLowerCase();
   }
 
   // commitRow draws one commit. As a list item inside the summary, and as a
