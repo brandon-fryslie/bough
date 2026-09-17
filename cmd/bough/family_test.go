@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nickelsec/bough/internal/agent"
 	"github.com/nickelsec/bough/internal/agent/registry"
 	"github.com/nickelsec/bough/internal/family"
 	"github.com/nickelsec/bough/internal/repo"
@@ -240,5 +242,37 @@ func TestANameOpensTheProjectNamedFromInsideAnother(t *testing.T) {
 	}
 	if g := parsed(t, out.Bytes()); g.Project.Name != "beta" {
 		t.Errorf("bough beta opened %q from inside another repository", g.Project.Name)
+	}
+}
+
+// What counts as a place is read from how the argument is written.
+func TestAnArgumentIsAPlaceWhenWrittenAsOne(t *testing.T) {
+	for arg, want := range map[string]bool{
+		"/work/app":     true,
+		`D:\trees\app`:  true,
+		"D:/trees/app":  true,
+		`\\wsl$\Ubuntu`: true,
+		".":             true,
+		"..":            true,
+		"./web":         true,
+		"sub/dir":       true,
+		"web":           false,
+		"site.com":      false,
+		"app [codex]":   false,
+	} {
+		if _, got := place(arg); got != want {
+			t.Errorf("place(%q) = %v, want %v", arg, got, want)
+		}
+	}
+}
+
+// A place two agents worked in is two projects, and a path names both rather
+// than quietly opening one.
+func TestAPathTwoAgentsWorkedInNamesBoth(t *testing.T) {
+	projects := []family.Project{alone("app", app, "claude-code"), alone("app", app, "codex")}
+	families := family.WithoutRepository([]agent.Project{projects[0].Members[0], projects[1].Members[0]}, nil)
+	_, err := choose(projects, families, app, strings.NewReader(""), io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "several projects") {
+		t.Errorf("err = %v, want both projects named", err)
 	}
 }

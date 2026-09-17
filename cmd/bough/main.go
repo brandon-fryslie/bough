@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -325,18 +326,12 @@ func choose(projects []family.Project, families *family.Resolver, arg string, in
 		return offer(projects, families.Resolve(workingDir()), in, out)
 	}
 
-	if p, ok := byPath(projects, families, arg); ok {
-		return p, nil
-	}
-
-	var matches []family.Project
-	for _, p := range projects {
-		name := strings.ToLower(p.Name())
-		tagged := fmt.Sprintf("%s [%s]", name, strings.ToLower(p.Agent))
-		argLower := strings.ToLower(arg)
-		if strings.Contains(name, argLower) || strings.Contains(tagged, argLower) {
-			matches = append(matches, p)
-		}
+	// A path and a name answer the same way: one project opens, and several
+	// are named so the reader can say which. A place two agents worked in is
+	// two projects, and a path that quietly chose one hid the other.
+	matches := byPath(projects, families, arg)
+	if len(matches) == 0 {
+		matches = byName(projects, arg)
 	}
 	switch len(matches) {
 	case 1:
@@ -451,46 +446,65 @@ func ago(t time.Time) string {
 	}
 }
 
-// byPath matches a project by a directory: the one it is known by, one of its
-// members, or anywhere else its family reaches.
+// byName matches projects whose name, or name and agent, holds the argument.
+func byName(projects []family.Project, arg string) []family.Project {
+	var matches []family.Project
+	argLower := strings.ToLower(arg)
+	for _, p := range projects {
+		name := strings.ToLower(p.Name())
+		tagged := fmt.Sprintf("%s [%s]", name, strings.ToLower(p.Agent))
+		if strings.Contains(name, argLower) || strings.Contains(tagged, argLower) {
+			matches = append(matches, p)
+		}
+	}
+	return matches
+}
+
+// byPath matches the projects of the family a directory belongs to: the one it
+// is known by, one of its members, or anywhere else its family reaches.
 //
 // [LAW:one-source-of-truth] The directory is resolved rather than compared
 // with each member's path, so a path opens the same project the listing put
-// it under, whichever spelling it was written in: the same normaliser the rest
-// of the tool compares paths with, which understands a transcript written on
-// Windows and read anywhere else.
-func byPath(projects []family.Project, families *family.Resolver, arg string) (family.Project, bool) {
+// it under, whichever spelling it was written in.
+func byPath(projects []family.Project, families *family.Resolver, arg string) []family.Project {
 	dir, ok := place(arg)
 	if !ok {
-		return family.Project{}, false
+		return nil
 	}
 	want := families.Resolve(dir)
+	var matches []family.Project
 	for _, p := range projects {
 		if p.Is(want) {
-			return p, true
+			matches = append(matches, p)
 		}
 	}
-	return family.Project{}, false
+	return matches
 }
 
-// place is the directory an argument names, when it names one.
+// place is the directory an argument names, when it is written as one.
 //
-// [LAW:parse-dont-validate] An absolute path is a place whether or not it
-// still exists, since a deleted worktree's path still says whose it was. A
-// relative one is a place only when it exists from where bough was run, as
-// `bough .` does. Anything else is a name: taken as a path from the working
-// directory, a name that is no directory there resolved to the repository
-// bough was run in and opened that instead of the project named.
+// [LAW:parse-dont-validate] The shape decides, not the disk. An absolute path,
+// in either platform's spelling since a history written on Windows can be read
+// anywhere, is a place whether or not it still exists: a deleted worktree's
+// path still says whose it was. A relative one is a place when it is written as
+// a path, `.` or with a separator, and is taken from where bough was run. A bare
+// word is a name, even when a directory of that name sits where bough was run:
+// taken as a path, a name resolved to the repository bough was run in and
+// opened that instead of the project named.
 func place(arg string) (string, bool) {
-	if filepath.IsAbs(arg) || strings.HasPrefix(filepath.ToSlash(arg), "/") {
+	slashed := strings.ReplaceAll(arg, `\`, "/")
+	switch {
+	case strings.HasPrefix(slashed, "/") || driveRooted.MatchString(slashed):
 		return arg, true
+	case slashed == "." || slashed == ".." || strings.Contains(slashed, "/"):
+		abs, err := filepath.Abs(arg)
+		return abs, err == nil
 	}
-	if info, err := os.Stat(arg); err != nil || !info.IsDir() {
-		return "", false
-	}
-	abs, err := filepath.Abs(arg)
-	return abs, err == nil
+	return "", false
 }
+
+// driveRooted matches a path that starts at a Windows drive.
+var driveRooted = regexp.MustCompile(`^[A-Za-z]:(/|$)`)
 
 // writeList prints one line per project, in columns wide enough for what is
 // actually in them, and under each the directories it was read from when
