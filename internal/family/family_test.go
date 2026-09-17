@@ -179,6 +179,7 @@ var (
 		"/private/tmp/claude-501/-Users-bmf-code-textual-js/1d56911b-b2f0-46e1-96a3-e1622bc1875c/scratchpad",
 		"/private/tmp/claude-501/-Users-bmf-code-textual-js/1d56911b-b2f0-46e1-96a3-e1622bc1875c/scratchpad/repro",
 		"D:/", "D:/work", "D:/work/site",
+		"//wsl$/Ubuntu", "//wsl$/Ubuntu/home", "//wsl$/Ubuntu/home/me", "//wsl$/Ubuntu/home/me/proj",
 		"/Users/bmf/.claude", "/Users/bmf/.claude/projects", "/Users/bmf/.claude/projects/-Users-bmf-Desktop-notes",
 		"/Users/bmf/.claude/plugins", "/Users/bmf/.claude/plugins/cache",
 		"/Users/bmf/.claude/plugins/cache/memento", "/Users/bmf/.claude/plugins/cache/memento/memento",
@@ -200,6 +201,7 @@ var (
 		"/Users/bmf/wt/low-talker-fix":          "/Users/bmf/code/low-talker",
 		"/Users/bmf/code/deps/vendorlib":        "/Users/bmf/code/deps/vendorlib",
 		"D:/work/site":                          "D:/work/site",
+		"//wsl$/Ubuntu/home/me/proj":            "//wsl$/Ubuntu/home/me/proj",
 
 		// A throwaway repository a session made inside its scratchpad.
 		"/private/tmp/claude-501/-Users-bmf-code-textual-js/1d56911b-b2f0-46e1-96a3-e1622bc1875c/scratchpad/repro": "/private/tmp/claude-501/-Users-bmf-code-textual-js/1d56911b-b2f0-46e1-96a3-e1622bc1875c/scratchpad/repro",
@@ -281,6 +283,12 @@ func TestResolve(t *testing.T) {
 		{"a worktree recorded under a deleted Windows directory follows it to the repository",
 			`D:\work\site\gone\.claude\worktrees\w`,
 			Family{"D:/work/site", Recorded}},
+		{"a deleted directory on a network share joins the repository above it",
+			`\\wsl$\Ubuntu\home\me\proj\gone\x.go`,
+			Family{"//wsl$/Ubuntu/home/me/proj", Repository}},
+		{"the walk up a network share ends at the share",
+			`\\wsl$\Ubuntu\tmp\gone`,
+			Family{"//wsl$/Ubuntu/tmp/gone", None}},
 		{"a relative path is nowhere in particular",
 			"src/main.go",
 			Family{"src/main.go", None}},

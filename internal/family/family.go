@@ -162,7 +162,8 @@ func (r *Resolver) Resolve(p string) Family {
 	return r.resolve(p, map[string]bool{})
 }
 
-// absolute matches a path that starts at a root, unix or Windows.
+// absolute matches a path that starts at a root: unix, a Windows drive, or a
+// Windows network share, which the first alternative covers.
 var absolute = regexp.MustCompile(`^(?:/|[A-Za-z]:/)`)
 
 // resolve carries the paths already followed through their records, so a
@@ -243,7 +244,13 @@ func (r *Resolver) recorded(p string, followed map[string]bool) (Family, bool) {
 // case-sensitive filesystem will not find a lower-cased spelling of a
 // directory that exists.
 func slashed(p string) string {
-	p = path.Clean(strings.ReplaceAll(p, `\`, "/"))
+	p = strings.ReplaceAll(p, `\`, "/")
+	// A Windows network share, \\server\share, starts with two separators,
+	// and cleaning folds them into one that names the current drive instead.
+	if strings.HasPrefix(p, "//") {
+		return "/" + path.Clean(p[1:])
+	}
+	p = path.Clean(p)
 	// path.Dir takes "C:/x" down to "C:", which on Windows is not the root of
 	// the drive but wherever the process happens to be on it.
 	if drive.MatchString(p) {
@@ -255,14 +262,21 @@ func slashed(p string) string {
 // drive matches a bare Windows drive designator.
 var drive = regexp.MustCompile(`^[A-Za-z]:$`)
 
+// share matches the root of a Windows network share, above which there is
+// nothing to walk to.
+var share = regexp.MustCompile(`^//[^/]+/[^/]+$`)
+
 // ancestors yields p and then each directory above it, ending at the root.
 func ancestors(p string) iter.Seq[string] {
 	return func(yield func(string) bool) {
 		for {
-			if !yield(p) {
+			if !yield(p) || share.MatchString(p) {
 				return
 			}
 			parent := slashed(path.Dir(p))
+			if strings.HasPrefix(p, "//") {
+				parent = slashed("/" + path.Dir(p[1:]))
+			}
 			if parent == p || parent == "." {
 				return
 			}
