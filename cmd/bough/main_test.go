@@ -408,3 +408,41 @@ func cancelled(err error) error {
 	}
 	return err
 }
+
+// A worktree sits under the project's .claude directory, where the agent keeps
+// its own files too. What the agent changed in one is the project's code, and
+// only the agents know which directories they made, so the command has to hand
+// that over for the measures to see the work.
+func TestWorkInAWorktreeCounts(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "d--calm-river")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const tree = "/work/app/.claude/worktrees/calm-river"
+	lines := []string{
+		`{"uuid":"1","type":"user","sessionId":"s1","promptId":"p1","cwd":"` + tree + `","timestamp":"2026-08-01T09:00:00.000Z",` +
+			`"message":{"role":"user","content":[{"type":"text","text":"rework the export path"}]}}`,
+		`{"uuid":"2","type":"assistant","timestamp":"2026-08-01T09:05:00.000Z","message":{"role":"assistant","content":[` +
+			`{"type":"tool_use","name":"Edit","input":{"file_path":"` + tree + `/export.go"}}]}}`,
+	}
+	if err := os.WriteFile(filepath.Join(dir, "s1.jsonl"), []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errs bytes.Buffer
+	if err := run([]string{"calm-river", "--json", "--no-repo", "--agent", "claude", "--root", root}, &out, &errs); err != nil {
+		t.Fatal(err)
+	}
+	var parsed struct {
+		Totals struct {
+			ChurnFile string `json:"churnFile"`
+		} `json:"totals"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &parsed); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	if want := tree + "/export.go"; parsed.Totals.ChurnFile != want {
+		t.Errorf("churn file = %q, want %q", parsed.Totals.ChurnFile, want)
+	}
+}

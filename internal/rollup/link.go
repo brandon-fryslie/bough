@@ -46,7 +46,7 @@ func DefaultLinkOptions() LinkOptions {
 // On real history these come out sparse, five links across seven goals in one
 // project and none at all in two others, so there is no thicket to prune. Where
 // there is nothing to say, nothing is drawn.
-func Links(goals []Goal, opt LinkOptions) []Link {
+func Links(goals []Goal, ambience metrics.Ambience, opt LinkOptions) []Link {
 	if len(goals) < 2 {
 		return nil
 	}
@@ -59,7 +59,7 @@ func Links(goals []Goal, opt LinkOptions) []Link {
 				// The agent's own plan and memory files are touched in nearly
 				// every sitting, so counting them would connect everything to
 				// everything and say nothing.
-				if metrics.Ambient(f) {
+				if ambience.Ambient(f) {
 					continue
 				}
 				edited[i][f] += n

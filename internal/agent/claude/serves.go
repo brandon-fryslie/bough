@@ -16,11 +16,11 @@ import (
 // scratchpad is a session's scratch space, /tmp/claude-<uid>/<mangled
 // cwd>/<session id>/scratchpad, sometimes with a subdirectory beneath. The
 // project it belongs to is named in the same form as the history directory.
-var scratchpad = regexp.MustCompile(`/claude-\d+/([^/]+)/[0-9a-fA-F-]{36}/scratchpad(?:/|$)`)
+var scratchpad = regexp.MustCompile(`/claude-\d+/([^/]+)/[0-9a-fA-F-]{36}/scratchpad(/.*)?$`)
 
 // worktree is a checkout Claude Code made under a project's own .claude
 // directory. Here the project is the path above it, written out in full.
-var worktree = regexp.MustCompile(`^(.*)/\.claude/worktrees/[^/]+(?:/|$)`)
+var worktree = regexp.MustCompile(`^(.*)/\.claude/worktrees/[^/]+(/.*)?$`)
 
 // mangle writes a path the way Claude Code names its history directory for
 // it: every character that is not a letter or digit becomes a dash. It is
@@ -28,25 +28,31 @@ var worktree = regexp.MustCompile(`^(.*)/\.claude/worktrees/[^/]+(?:/|$)`)
 // not a path.
 var mangle = regexp.MustCompile(`[^A-Za-z0-9]`)
 
-// serves is the record Claude Code left in the path of a directory it made of
-// which project that was for, as a question about a candidate, or nil for a
-// path in no such directory.
-func serves(path string) func(string) bool {
+// serves is the record Claude Code left in the path of a directory it made:
+// which project that was for, as a question about a candidate, and what lies
+// below it.
+func serves(path string) (agent.Made, bool) {
 	path = strings.ReplaceAll(path, `\`, "/")
 	if m := scratchpad.FindStringSubmatch(path); m != nil {
 		name := m[1]
-		return func(candidate string) bool {
-			// Both spellings of a Windows drive letter are written the same
-			// way by the agent, and the transcript is not consistent about
-			// which it records.
-			return strings.EqualFold(mangle.ReplaceAllString(candidate, "-"), name)
-		}
+		return agent.Made{
+			For: func(candidate string) bool {
+				// Both spellings of a Windows drive letter are written the same
+				// way by the agent, and the transcript is not consistent about
+				// which it records.
+				return strings.EqualFold(mangle.ReplaceAllString(candidate, "-"), name)
+			},
+			Within: m[2],
+		}, true
 	}
 	if m := worktree.FindStringSubmatch(path); m != nil {
 		parent := agent.NormalisePath(m[1])
-		return func(candidate string) bool {
-			return agent.NormalisePath(candidate) == parent
-		}
+		return agent.Made{
+			For: func(candidate string) bool {
+				return agent.NormalisePath(candidate) == parent
+			},
+			Within: m[2],
+		}, true
 	}
-	return nil
+	return agent.Made{}, false
 }

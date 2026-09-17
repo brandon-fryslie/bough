@@ -170,6 +170,11 @@ func run(args []string, stdout, stderr io.Writer) error {
 
 	opt := graph.DefaultOptions()
 	opt.Tool = released()
+	// Every agent, not only the ones asked for: a session of one agent can
+	// work in a directory another made.
+	for _, a := range registry.All() {
+		opt.Ambience.Made = append(opt.Ambience.Made, a.MadeFor)
+	}
 	// Reading git happens here, at the edge, rather than inside the graph.
 	// Building a graph is arithmetic over sessions; shelling out is not, and a
 	// package that does both cannot be tested without a filesystem.

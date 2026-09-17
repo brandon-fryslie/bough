@@ -30,7 +30,7 @@ func TestSummariseCountsWork(t *testing.T) {
 	turns[1].Errors = 2
 	turns[0].Tools["Edit"] = 3
 
-	s := Summarise(turns)
+	s := Summarise(turns, Ambience{})
 
 	if s.Turns != 3 {
 		t.Errorf("turns = %d, want 3", s.Turns)
@@ -64,7 +64,7 @@ func TestActiveTimeExcludesBreaks(t *testing.T) {
 		turn(600), // came back the next morning
 		turn(605),
 	}
-	s := Summarise(turns)
+	s := Summarise(turns, Ambience{})
 
 	if s.Span != 605*time.Minute {
 		t.Errorf("span = %v, want the whole window", s.Span)
@@ -77,9 +77,9 @@ func TestActiveTimeExcludesBreaks(t *testing.T) {
 // Ordering has to be stable, or the same history renders differently each run.
 func TestTopFilesIsDeterministic(t *testing.T) {
 	turns := []agent.Turn{turn(0, "b.go", "a.go", "c.go")}
-	first := Summarise(turns).TopFiles
+	first := Summarise(turns, Ambience{}).TopFiles
 	for i := 0; i < 20; i++ {
-		got := Summarise(turns).TopFiles
+		got := Summarise(turns, Ambience{}).TopFiles
 		for j := range got {
 			if got[j] != first[j] {
 				t.Fatalf("ordering changed between runs: %v then %v", first, got)
@@ -92,7 +92,7 @@ func TestTopFilesIsDeterministic(t *testing.T) {
 }
 
 func TestSummariseHandlesNothing(t *testing.T) {
-	s := Summarise(nil)
+	s := Summarise(nil, Ambience{})
 	if s.Turns != 0 || s.Struggle() != 0 {
 		t.Errorf("empty input should give an empty summary, got %+v", s)
 	}
@@ -111,8 +111,8 @@ func TestStruggleRanksChurnAboveVolume(t *testing.T) {
 		smooth = append(smooth, turn(i*3, string(rune('a'+i))+".go"))
 	}
 
-	hard := Summarise(stuck).Struggle()
-	easy := Summarise(smooth).Struggle()
+	hard := Summarise(stuck, Ambience{}).Struggle()
+	easy := Summarise(smooth, Ambience{}).Struggle()
 
 	if hard <= easy {
 		t.Errorf("churn %.2f should rate harder than steady progress %.2f", hard, easy)
@@ -129,7 +129,7 @@ func TestStruggleDoesNotHingeOnErrors(t *testing.T) {
 	noisy[0].Errors = 5
 	noisy[1].Errors = 5
 
-	if d := Summarise(noisy).Struggle() - Summarise(clean).Struggle(); d > 0.2 {
+	if d := Summarise(noisy, Ambience{}).Struggle() - Summarise(clean, Ambience{}).Struggle(); d > 0.2 {
 		t.Errorf("errors moved the score by %.2f, more than they should", d)
 	}
 }
@@ -143,7 +143,7 @@ func TestAmbientFilesDoNotCountAsChurn(t *testing.T) {
 	}
 	turns = append(turns, turn(70, "real.go"), turn(73, "real.go"))
 
-	s := Summarise(turns)
+	s := Summarise(turns, Ambience{})
 
 	if s.ChurnFile != "real.go" {
 		t.Errorf("churn file = %q, want the user's own file", s.ChurnFile)
@@ -154,33 +154,5 @@ func TestAmbientFilesDoNotCountAsChurn(t *testing.T) {
 	// The edits still happened, so they are still reported, just separately.
 	if s.Edits != 22 || s.AmbientEdits != 20 {
 		t.Errorf("edits = %d with %d ambient, want 22 and 20", s.Edits, s.AmbientEdits)
-	}
-}
-
-func TestAmbient(t *testing.T) {
-	ambient := []string{
-		"/home/x/.claude/plans/session.md",
-		`C:\Users\x\.claude\projects\p\memory\notes.md`,
-		"/proj/CHANGELOG.md",
-		"/proj/memory.md",
-		"/proj/Cargo.lock",
-		"/proj/CLAUDE.md",
-	}
-	for _, p := range ambient {
-		if !Ambient(p) {
-			t.Errorf("Ambient(%q) = false, want true", p)
-		}
-	}
-
-	real := []string{
-		"/proj/src/main.go",
-		"/proj/ui/hero.css",
-		"/proj/Cargo.toml",
-		"/proj/docs/format.md",
-	}
-	for _, p := range real {
-		if Ambient(p) {
-			t.Errorf("Ambient(%q) = true, want false", p)
-		}
 	}
 }

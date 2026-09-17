@@ -40,6 +40,11 @@ type Options struct {
 	// it is rather than being cleared as unreachable.
 	Repo repo.History
 
+	// Ambience tells the agent's own files from the user's work. It carries
+	// what every agent reads out of the directories it makes, which only the
+	// caller can supply, since this package may not see an agent.
+	Ambience metrics.Ambience
+
 	// Now supplies the timestamp, so tests can pin it.
 	Now func() time.Time
 }
@@ -118,21 +123,21 @@ func Build(p agent.Project, sessions []agent.Session, opt Options) Graph {
 			Label:  rollup.Label(turns),
 			Title:  titles[i],
 			Period: rollup.Period(first(turns), last(turns)),
-			Stats:  statsOf(turns),
+			Stats:  statsOf(turns, opt.Ambience),
 		}
 		for j, t := range goal.Tasks {
 			out.Tasks = append(out.Tasks, Task{
 				ID:      fmt.Sprintf("g%d.t%d", i+1, j+1),
 				Label:   rollup.Label(t.Turns),
 				Reasons: reasonsOf(t),
-				Stats:   statsOf(t.Turns),
+				Stats:   statsOf(t.Turns, opt.Ambience),
 				Turns:   turnsOf(t.Turns),
 			})
 		}
 		g.Goals = append(g.Goals, out)
 	}
 
-	for _, l := range rollup.Links(goals, opt.Links) {
+	for _, l := range rollup.Links(goals, opt.Ambience, opt.Links) {
 		g.Links = append(g.Links, Link{
 			From:   fmt.Sprintf("g%d", l.From+1),
 			To:     fmt.Sprintf("g%d", l.To+1),
@@ -141,7 +146,7 @@ func Build(p agent.Project, sessions []agent.Session, opt Options) Graph {
 		})
 	}
 
-	g.Totals = statsOf(everyTurn)
+	g.Totals = statsOf(everyTurn, opt.Ambience)
 	return g
 }
 
@@ -172,8 +177,8 @@ func inTimeOrder(goals []rollup.Goal, titles map[int]string) ([]rollup.Goal, map
 	return out, newTitles
 }
 
-func statsOf(turns []agent.Turn) Stats {
-	s := metrics.Summarise(turns)
+func statsOf(turns []agent.Turn, ambience metrics.Ambience) Stats {
+	s := metrics.Summarise(turns, ambience)
 	out := Stats{
 		Start:         s.Start,
 		End:           s.End,
