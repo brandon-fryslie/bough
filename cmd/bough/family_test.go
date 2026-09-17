@@ -76,9 +76,11 @@ func TestListShowsOneRowPerFamily(t *testing.T) {
 		var rows []string
 		for _, line := range strings.Split(strings.TrimRight(out.String(), "\n"), "\n") {
 			if !strings.HasPrefix(line, " ") {
-				rows = append(rows, strings.Join(strings.Fields(line), " "))
+				rows = append(rows, filepath.ToSlash(strings.Join(strings.Fields(line), " ")))
 			}
 		}
+		// A path is listed the way the host spells it.
+		listing := filepath.ToSlash(out.String())
 		want := []string{
 			"app [Claude Code] /work/app 6 prompts in 3 directories",
 			"draft [Claude Code] /writing/draft 5 prompts",
@@ -89,8 +91,8 @@ func TestListShowsOneRowPerFamily(t *testing.T) {
 			t.Errorf("with %q the rows are\n%s\nwant\n%s", flags, strings.Join(rows, "\n"), strings.Join(want, "\n"))
 		}
 		for _, member := range []string{tree + "  2 prompts", pad + "  1 prompts"} {
-			if !strings.Contains(out.String(), member) {
-				t.Errorf("with %q the listing does not show %q:\n%s", flags, member, out.String())
+			if !strings.Contains(listing, member) {
+				t.Errorf("with %q the listing does not show %q:\n%s", flags, member, listing)
 			}
 		}
 	}
@@ -105,7 +107,7 @@ func TestAMemberPathOpensItsFamily(t *testing.T) {
 			t.Fatal(err)
 		}
 		g := parsed(t, out.Bytes())
-		if g.Project.Path != app || len(g.Project.Directories) != 3 || g.Totals.Turns != 6 {
+		if filepath.ToSlash(g.Project.Path) != app || len(g.Project.Directories) != 3 || g.Totals.Turns != 6 {
 			t.Errorf("%s opened %s over %q with %d prompts, want app over 3 directories with 6",
 				arg, g.Project.Path, g.Project.Directories, g.Totals.Turns)
 		}
@@ -125,7 +127,9 @@ func TestAProjectInNoRepositoryOpensAsBefore(t *testing.T) {
 		t.Fatal(err)
 	}
 	g := parsed(t, out.Bytes())
-	if g.Project.Name != "draft" || g.Project.Path != loneDraft || strings.Join(g.Project.Directories, "|") != loneDraft || g.Totals.Turns != 5 {
+	// A path is spelled the way the host spells it.
+	if g.Project.Name != "draft" || filepath.ToSlash(g.Project.Path) != loneDraft ||
+		filepath.ToSlash(strings.Join(g.Project.Directories, "|")) != loneDraft || g.Totals.Turns != 5 {
 		t.Errorf("got %+v with %d prompts", g.Project, g.Totals.Turns)
 	}
 }

@@ -107,7 +107,7 @@ func TestSessionsReadsTitleAndTurns(t *testing.T) {
 		t.Errorf("id = %q, want s1", sessions[0].ID)
 	}
 	// A commit's relative directory is relative to where the session ran.
-	if sessions[0].Dir != "/work/example" {
+	if sessions[0].Dir != filepath.Clean("/work/example") {
 		t.Errorf("dir = %q, want the directory the session ran in", sessions[0].Dir)
 	}
 	if len(sessions[0].Turns) != 1 {
