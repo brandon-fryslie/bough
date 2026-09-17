@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -226,12 +227,34 @@ func TestStoppingADriverDoesNotWaitOnWhatItLeftRunning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { endLeftover(t, d) })
 
 	begun := time.Now()
 	d.Stop()
 	if waited := time.Since(begun); waited > 5*time.Second {
 		t.Errorf("stopping took %v, waiting on the driver's leftover child", waited)
 	}
+}
+
+// endLeftover ends the child the orphan left running, whose pid is all the
+// orphan prints. The child is this test binary, and Windows will not delete a binary
+// that is still running.
+func endLeftover(t *testing.T, d *Driver) {
+	t.Helper()
+	pid, err := strconv.Atoi(d.output.String())
+	if err != nil {
+		t.Fatalf("the orphan did not name its child: %v", err)
+	}
+	child, err := os.FindProcess(pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := child.Kill(); err != nil {
+		t.Error(err)
+	}
+	// Only Windows can wait on a process it did not start; elsewhere this
+	// returns at once, and the child is gone once killed.
+	_, _ = child.Wait()
 }
 
 // fakeDriver names the environment variable that turns this test binary into a
@@ -255,7 +278,8 @@ func TestMain(m *testing.M) {
 }
 
 // orphanAndServe starts a child that shares this process's output and outlives
-// it, as a browser does, then answers /status on the port it was given.
+// it, as a browser does, prints the child's pid, then answers /status on the
+// port it was given.
 func orphanAndServe() {
 	child := exec.Command(os.Args[0])
 	child.Env = append(os.Environ(), fakeDriver+"=leftover")
@@ -263,6 +287,7 @@ func orphanAndServe() {
 	if err := child.Start(); err != nil {
 		os.Exit(4)
 	}
+	_, _ = os.Stdout.WriteString(strconv.Itoa(child.Process.Pid))
 	port := strings.TrimPrefix(os.Args[len(os.Args)-1], "--port=")
 	ready := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, `{"value":{"ready":true}}`)
