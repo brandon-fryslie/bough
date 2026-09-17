@@ -25,7 +25,8 @@
 // against the input's time rather than against when finish was called.
 // ParseRecording refuses a recording that stops sooner.
 (function (root) {
-  var INPUT = ["pointerdown", "pointermove", "pointerup", "wheel", "keydown"];
+  // input is here for text that arrives without a key, as a driver can type it.
+  var INPUT = ["pointerdown", "pointermove", "pointerup", "wheel", "keydown", "input"];
   var listen = { capture: true, passive: true };
 
   // stop ends the recording in progress, so a probe started twice on one page
@@ -73,7 +74,12 @@
       INPUT.forEach(function (name) { root.addEventListener(name, note, listen); });
       requestAnimationFrame(tick);
 
-      root.__boughProbe.finish = function (done) { finished = done; };
+      // A recording already stopped answers at once, so a driver asking twice
+      // gets the recording rather than a wait that never ends.
+      root.__boughProbe.finish = function (done) {
+        if (running) finished = done;
+        else done(recording);
+      };
     }
   };
 })(typeof window !== "undefined" ? window : globalThis);

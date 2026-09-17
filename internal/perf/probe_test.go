@@ -35,9 +35,10 @@ func TestProbeRecordsWhatParses(t *testing.T) {
 	}
 
 	var run struct {
-		Recording json.RawMessage `json:"recording"`
-		Listening int             `json:"listening"`
-		Pending   int             `json:"pending"`
+		Recording  json.RawMessage `json:"recording"`
+		AskedAgain bool            `json:"askedAgain"`
+		Listening  int             `json:"listening"`
+		Pending    int             `json:"pending"`
 	}
 	if err := json.Unmarshal(out, &run); err != nil {
 		t.Fatalf("reading the stand-in page's output: %v\n%s", err, out)
@@ -50,6 +51,9 @@ func TestProbeRecordsWhatParses(t *testing.T) {
 	}
 	if run.Pending != 0 {
 		t.Errorf("%d frame requests left after finishing", run.Pending)
+	}
+	if !run.AskedAgain {
+		t.Error("asking a finished probe for its recording again did not hand it over")
 	}
 
 	r, err := ParseRecording(run.Recording)
@@ -110,22 +114,27 @@ for (let i = 0; i < 10; i++) {
   frame();
 }
 
-// Stamped later than the next frame starts, as Chrome can report a wheel it
-// dispatches at the start of a frame, and followed by an event stamped earlier.
-input("keydown", 20);
+// Text typed without a key, stamped later than the next frame starts, as Chrome
+// can report a wheel it dispatches at the start of a frame, and followed by an
+// event stamped earlier.
+input("input", 20);
 input("pointermove", 1);
 
 let recording = null;
 window.__boughProbe.finish((r) => { recording = r; });
 for (let i = 0; !recording; i++) {
   if (i > 5) throw new Error("the probe never finished");
-  // The second frame after is the first at or after the keydown, so the one
-  // after that is late by however long drawing the keydown took.
+  // The second frame after is the first at or after the typing, so the one
+  // after that is late by however long drawing it took.
   frame(i === 2 ? 300 : 0);
 }
 
+let again = null;
+window.__boughProbe.finish((r) => { again = r; });
+
 console.log(JSON.stringify({
   recording,
+  askedAgain: again === recording,
   listening: Object.values(listeners).reduce((n, l) => n + l.length, 0),
   pending: pending.length,
 }));
