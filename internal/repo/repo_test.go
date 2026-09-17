@@ -301,9 +301,13 @@ func TestReadAllGathersEveryCheckoutsCommits(t *testing.T) {
 
 	var d Disk
 	tree := d.MainTree(main)
-	dirs := d.Checkouts(tree, []string{tree, linked, throwaway, filepath.Join(base, "gone"), main})
-	if len(dirs) != 3 {
-		t.Errorf("checkouts = %q, want the main tree, the worktree and the main tree again", dirs)
+	sub := filepath.Join(main, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dirs := d.Checkouts(tree, []string{tree, linked, throwaway, filepath.Join(base, "gone"), main, sub})
+	if len(dirs) != 2 {
+		t.Errorf("checkouts = %q, want the main tree and the worktree, once each", dirs)
 	}
 	if got := d.Checkouts("", []string{throwaway}); len(got) != 0 {
 		t.Errorf("a project in no repository has checkouts %q", got)

@@ -119,18 +119,18 @@ func TestListSaysWhenAHistoryCannotBeRead(t *testing.T) {
 	}
 }
 
-// A project over several directories says how many of them failed to read,
-// since one failure does not make the rest unreadable.
-func TestListSaysHowManyDirectoriesCouldNotBeRead(t *testing.T) {
+// Across several directories, one that failed to read does not make the
+// project unreadable, since the others may simply be empty.
+func TestListDoesNotCallSeveralDirectoriesUnreadableForOneFailure(t *testing.T) {
 	for _, c := range []struct {
 		t    tally
 		want string
 	}{
 		{tally{prompts: 3, dirs: 1}, "3 prompts"},
 		{tally{prompts: 6, dirs: 3}, "6 prompts in 3 directories"},
-		{tally{dirs: 1, unread: 1}, "could not be read"},
-		{tally{prompts: 2, dirs: 1, unread: 1}, "2 prompts, some could not be read"},
-		{tally{dirs: 2, unread: 1}, "0 prompts in 2 directories, 1 of them with history that could not be read"},
+		{tally{dirs: 1, unread: true}, "could not be read"},
+		{tally{prompts: 2, dirs: 1, unread: true}, "2 prompts, some could not be read"},
+		{tally{dirs: 2, unread: true}, "0 prompts in 2 directories, some could not be read"},
 	} {
 		if got := c.t.say(); got != c.want {
 			t.Errorf("%+v says %q, want %q", c.t, got, c.want)

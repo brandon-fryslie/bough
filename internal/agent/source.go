@@ -84,10 +84,13 @@ type Source interface {
 	// A source that is not installed returns no projects and no error.
 	Detect() ([]Project, error)
 
-	// Sessions reads every session belonging to a project. A session that
+	// Sessions reads every session belonging to the projects, each session
+	// once however many of them its records are spread over. One project read
+	// whole is several directories, and an agent that resumes a session from
+	// another directory replays its earlier records there. A session that
 	// cannot be read is reported through the error return without stopping
 	// the ones that can, since partial history is still worth showing.
-	Sessions(Project) ([]Session, error)
+	Sessions(projects ...Project) ([]Session, error)
 }
 
 // Project is a codebase an agent has worked on.

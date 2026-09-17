@@ -30,6 +30,7 @@
 package family
 
 import (
+	"cmp"
 	"iter"
 	"path"
 	"regexp"
@@ -335,7 +336,8 @@ func (p Project) Holds(dir string) bool {
 }
 
 // Projects gathers the projects the resolver was made from into one per
-// family and agent, in the order the agents first appear and then by name.
+// family and agent, in the order the agents first appear and then by name
+// and path.
 func (r *Resolver) Projects() []Project {
 	var out []Project
 	at := map[string]int{}
@@ -364,7 +366,8 @@ func (r *Resolver) Projects() []Project {
 		if a.Agent != b.Agent {
 			return agents[a.Agent] - agents[b.Agent]
 		}
-		return strings.Compare(a.Name(), b.Name())
+		// Then by path, so two projects of one name keep an order between runs.
+		return cmp.Or(strings.Compare(a.Name(), b.Name()), strings.Compare(a.Path, b.Path))
 	})
 	return out
 }

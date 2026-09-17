@@ -3,6 +3,7 @@ package repo
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -58,19 +59,28 @@ func (d *Disk) MainTree(dir string) string {
 	return tree
 }
 
-// Checkouts are the directories among dirs that are checkouts of the
-// repository whose main working tree is tree: it, its subdirectories and its
-// linked worktrees, as they are on disk now.
+// Checkouts are the working trees among dirs that are checkouts of the
+// repository whose main working tree is tree: it and its linked worktrees, each
+// once, however many of its subdirectories were asked about.
 //
 // A project's members are not all its repository. A scratchpad joins by the
 // agent's record and may hold a throwaway repository of its own, whose
 // commits read alongside the project's would lend their hashes to commits made
-// near them in time.
+// near them in time. And a subdirectory is on its checkout's branch, so reading
+// its log again finds nothing new at the cost of another pass over the history.
 func (d *Disk) Checkouts(tree string, dirs []string) []string {
 	var out []string
 	for _, dir := range dirs {
-		if tree != "" && d.Exists(dir) && d.MainTree(dir) == tree {
-			out = append(out, dir)
+		if tree == "" || !d.Exists(dir) || d.MainTree(dir) != tree {
+			continue
+		}
+		top, err := run(dir, "rev-parse", "--show-toplevel")
+		if err != nil {
+			continue
+		}
+		top = filepath.Clean(strings.TrimRight(top, "\n"))
+		if !slices.Contains(out, top) {
+			out = append(out, top)
 		}
 	}
 	return out

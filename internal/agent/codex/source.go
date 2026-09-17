@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/nickelsec/bough/internal/agent"
 	"github.com/nickelsec/bough/internal/agent/shell"
@@ -119,10 +120,26 @@ func (s Source) Detect() ([]agent.Project, error) {
 // within one. Reading each file on its own means the deduplication never sees
 // the first copy, and a resumed session comes back as several sessions with
 // its early prompts counted once per resume.
-func (s Source) Sessions(p agent.Project) ([]agent.Session, error) {
-	var files []string
-	if err := json.Unmarshal([]byte(p.Ref), &files); err != nil {
-		files = []string{p.Ref}
+//
+// The same holds across projects. A session resumed from another directory
+// writes its replay under that directory's project, so the rollouts of every
+// project asked for are gathered together, and a session belongs to the
+// directory its earliest rollout was written in.
+func (s Source) Sessions(projects ...agent.Project) ([]agent.Session, error) {
+	type rollout struct{ file, dir string }
+	var rollouts []rollout
+	seen := map[string]bool{}
+	for _, p := range projects {
+		var files []string
+		if err := json.Unmarshal([]byte(p.Ref), &files); err != nil {
+			files = []string{p.Ref}
+		}
+		for _, f := range files {
+			if !seen[f] {
+				seen[f] = true
+				rollouts = append(rollouts, rollout{file: f, dir: p.Path})
+			}
+		}
 	}
 
 	var problems []error
@@ -131,12 +148,15 @@ func (s Source) Sessions(p agent.Project) ([]agent.Session, error) {
 	type group struct {
 		id     string
 		parent string
+		dir    string
+		began  time.Time
 		recs   []*Record
 	}
 	var order []string
 	byID := map[string]*group{}
 
-	for _, fp := range files {
+	for _, r := range rollouts {
+		fp := r.file
 		f, err := os.Open(fp) //#nosec G304
 		if err != nil {
 			problems = append(problems, err)
@@ -155,9 +175,14 @@ func (s Source) Sessions(p agent.Project) ([]agent.Session, error) {
 		id, parent := identify(recs, fp)
 		g := byID[id]
 		if g == nil {
-			g = &group{id: id, parent: parent}
+			g = &group{id: id, parent: parent, dir: r.dir, began: recs[0].Time()}
 			byID[id] = g
 			order = append(order, id)
+		}
+		// The session ran in the directory of its earliest rollout, whichever
+		// order the rollouts were read in.
+		if recs[0].Time().Before(g.began) {
+			g.dir, g.began = r.dir, recs[0].Time()
 		}
 		g.recs = append(g.recs, recs...)
 	}
@@ -180,7 +205,7 @@ func (s Source) Sessions(p agent.Project) ([]agent.Session, error) {
 			Title:    "",
 			Turns:    turns,
 			ParentID: g.parent,
-			Dir:      p.Path,
+			Dir:      g.dir,
 		})
 	}
 

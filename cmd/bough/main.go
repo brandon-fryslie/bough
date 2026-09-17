@@ -167,7 +167,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	sessions, err := read(sources[target.Agent], target)
+	sessions, err := sources[target.Agent].Sessions(target.Members...)
 	if err != nil {
 		// Some transcripts may be unreadable while others are fine, so say so
 		// and carry on with what did load.
@@ -220,21 +220,6 @@ func resolver(projects []agent.Project, made []agent.MadeFor, disk *repo.Disk, n
 		return family.WithoutRepository(projects, made)
 	}
 	return family.New(projects, made, disk)
-}
-
-// read gathers the sessions of every directory in a project. A directory that
-// cannot be read is reported without losing the others.
-func read(src agent.Source, p family.Project) ([]agent.Session, error) {
-	sessions := make([]agent.Session, 0, len(p.Members))
-	var problems []error
-	for _, m := range p.Members {
-		found, err := src.Sessions(m)
-		sessions = append(sessions, found...)
-		if err != nil {
-			problems = append(problems, err)
-		}
-	}
-	return sessions, errors.Join(problems...)
 }
 
 // options are what building a project's graph needs from this edge.
@@ -514,19 +499,22 @@ func writeList(w io.Writer, sources map[string]agent.Source, projects []family.P
 	rows := make([]row, 0, len(projects))
 	var nameW, agentW, pathW int
 	for _, p := range projects {
-		r := row{name: p.Name(), agent: "[" + registry.Display(p.Agent) + "]", path: p.Path}
-		for _, m := range p.Members {
-			sessions, err := sources[m.Source].Sessions(m)
-			d := dir{path: m.Path, count: tally{dirs: 1}}
-			if err != nil {
-				d.count.unread = 1
-			}
-			for _, s := range sessions {
-				d.count.prompts += len(s.Turns)
-			}
-			r.count = r.count.add(d.count)
-			r.dirs = append(r.dirs, d)
+		src := sources[p.Agent]
+		// The project is read whole, so a session whose records are spread
+		// over several of its directories counts once.
+		r := row{name: p.Name(), agent: "[" + registry.Display(p.Agent) + "]", path: p.Path,
+			count: tallied(len(p.Members))(src.Sessions(p.Members...))}
+
+		// Each directory on its own only when they are asked for, since that
+		// reads every one of them a second time.
+		shown := p.Members
+		if !everyDir {
+			shown = nil
 		}
+		for _, m := range shown {
+			r.dirs = append(r.dirs, dir{path: m.Path, count: tallied(1)(src.Sessions(m))})
+		}
+
 		rows = append(rows, r)
 		nameW = wider(nameW, r.name)
 		agentW = wider(agentW, r.agent)
@@ -547,11 +535,7 @@ func writeList(w io.Writer, sources map[string]agent.Source, projects []family.P
 			nameW, r.name, agentW, r.agent, pathW, r.path, r.count.say())
 
 		// Under the project's own path, so the directories read as parts of it.
-		shown := r.dirs
-		if !everyDir {
-			shown = nil
-		}
-		for _, d := range shown {
+		for _, d := range r.dirs {
 			fmt.Fprintf(w, "%-*s  %-*s  %-*s  %s\n", nameW, "", agentW, "", pathW, d.path, d.count.say())
 		}
 	}
@@ -562,18 +546,25 @@ func writeList(w io.Writer, sources map[string]agent.Source, projects []family.P
 type tally struct {
 	prompts int
 
-	// dirs is how many directories were counted.
+	// dirs is how many directories were read.
 	dirs int
 
-	// unread is how many of them had history that could not be read, which
-	// is a different thing from having no prompts. Both used to print as
-	// "0 prompts", so a permission problem or a corrupt file read as an empty
-	// project and there was nothing to say otherwise.
-	unread int
+	// unread means some history could not be read, which is a different
+	// thing from having no prompts. Both used to print as "0 prompts", so a
+	// permission problem or a corrupt file read as an empty project and there
+	// was nothing to say otherwise.
+	unread bool
 }
 
-func (t tally) add(o tally) tally {
-	return tally{prompts: t.prompts + o.prompts, dirs: t.dirs + o.dirs, unread: t.unread + o.unread}
+// tallied counts what a read of dirs directories found.
+func tallied(dirs int) func([]agent.Session, error) tally {
+	return func(sessions []agent.Session, err error) tally {
+		t := tally{dirs: dirs, unread: err != nil}
+		for _, s := range sessions {
+			t.prompts += len(s.Turns)
+		}
+		return t
+	}
 }
 
 // say gives the count, across however many directories it was taken from, or
@@ -582,22 +573,20 @@ func (t tally) add(o tally) tally {
 // A history that failed to read says so rather than reporting a number. The
 // count came from a discarded error, so a project whose transcripts could not
 // be opened printed "0 prompts" exactly as an empty one does, and nothing said
-// which of the two it was. Across several directories it says how many
-// failed, since one failure does not make the others unreadable.
+// which of the two it was. Only a single directory with nothing read is
+// unreadable outright: across several, one failure says nothing of the rest.
 func (t tally) say() string {
 	where := ""
 	if t.dirs > 1 {
 		where = fmt.Sprintf(" in %d directories", t.dirs)
 	}
 	switch {
-	case t.unread == 0:
+	case !t.unread:
 		return fmt.Sprintf("%d prompts%s", t.prompts, where)
 	case t.dirs == 1 && t.prompts == 0:
 		return "could not be read"
-	case t.dirs == 1:
-		return fmt.Sprintf("%d prompts, some could not be read", t.prompts)
 	}
-	return fmt.Sprintf("%d prompts%s, %d of them with history that could not be read", t.prompts, where, t.unread)
+	return fmt.Sprintf("%d prompts%s, some could not be read", t.prompts, where)
 }
 
 const usage = `bough shows the shape of the work in a project's AI coding history.
