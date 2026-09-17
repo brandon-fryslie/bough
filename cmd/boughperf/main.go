@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -39,6 +40,9 @@ reach the page is skipped, with why.
 Exit status is 0 when every run recorded and at least one did, 1 when any run
 or browser failed or nothing was measured, and 2 when the flags are wrong.
 
+boughperf compare before.json after.json says what changed between two kept
+runs, beyond the spread of their repeats.
+
 `
 
 // The exit statuses usage promises.
@@ -57,7 +61,16 @@ const (
 )
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(command(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+// command measures, or compares two kept runs when its first argument is
+// compare.
+func command(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "compare" {
+		return compareRuns(args[1:], stdout, stderr)
+	}
+	return run(args, stdout, stderr)
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
@@ -89,12 +102,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "boughperf:", err)
 		return someFailed
 	}
+	measuring, err := fingerprint(p.history.name, g)
+	if err != nil {
+		fmt.Fprintln(stderr, "boughperf:", err)
+		return someFailed
+	}
 
 	// No interrupt is caught: the terminal interrupts the drivers too, so the
 	// windows could not be closed in order anyway, and a run cut short is not
 	// one to compare against.
 	ctx := context.Background()
-	r := results{Started: started, Revision: revision, Graph: p.history.name, Repeats: p.repeats}
+	r := results{Started: started, Revision: revision, Graph: measuring, Repeats: p.repeats}
 	err = serve(ctx, g, func(url string) {
 		for _, b := range browsers {
 			r.Browsers = append(r.Browsers, measure(ctx, b, url, p, stderr))
@@ -222,8 +240,12 @@ func pickBrowsers(names string) (func(io.Writer) ([]webdriver.Browser, error), e
 	if names == "" {
 		return installed, nil
 	}
+	listed, err := split(names)
+	if err != nil {
+		return nil, err
+	}
 	var out []webdriver.Browser
-	for _, name := range split(names) {
+	for _, name := range listed {
 		b, err := webdriver.Named(name)
 		if err != nil {
 			return nil, err
@@ -258,8 +280,12 @@ func pickScenarios(names string) ([]scenario.Scenario, error) {
 	if names == "" {
 		return scenario.All, nil
 	}
+	listed, err := split(names)
+	if err != nil {
+		return nil, err
+	}
 	var out []scenario.Scenario
-	for _, name := range split(names) {
+	for _, name := range listed {
 		sc, err := scenario.Named(name)
 		if err != nil {
 			return nil, err
@@ -269,8 +295,27 @@ func pickScenarios(names string) ([]scenario.Scenario, error) {
 	return out, nil
 }
 
-func split(list string) []string {
-	return strings.FieldsFunc(list, func(r rune) bool { return r == ',' || r == ' ' })
+// split is the names in a comma separated list, each named once. A list that
+// names nothing is refused rather than read as asking for nothing.
+func split(list string) ([]string, error) {
+	names := strings.FieldsFunc(list, func(r rune) bool { return r == ',' || r == ' ' })
+	if len(names) == 0 {
+		return nil, fmt.Errorf("%q names nothing", list)
+	}
+	return names, once(names)
+}
+
+// once refuses a name given twice. A browser or scenario played twice under
+// one name is kept twice, and a comparison could only ever find the first.
+//
+// [LAW:single-enforcer] flags and kept files are both held to it here.
+func once(names []string) error {
+	for i, name := range names {
+		if slices.Contains(names[:i], name) {
+			return fmt.Errorf("%s is named twice", name)
+		}
+	}
+	return nil
 }
 
 // revision is the commit the working tree is at, and dirty when anything in
