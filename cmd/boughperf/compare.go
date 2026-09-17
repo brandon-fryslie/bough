@@ -18,12 +18,14 @@ import (
 const compareUsage = `usage: boughperf compare before.json after.json
 
 Compares two kept runs of the same graph, scenario by scenario in each
-browser. Each metric is shown as the middle of its runs with the least and
-most any run reached. A change counts only when every run after is past every
-run before, which noise alone does less than once in a hundred comparisons
-(so five runs a side, or more on one side for fewer on the other), and when
-it moves the middle by more than half a frame for a time, since frame times
-jitter by less than that.
+browser, taken on displays that refresh at the same rate. Each metric is
+shown as the middle of its runs with the least and most any run reached. A
+change counts only when every run after is past every run before, which noise
+alone does to one metric less than once in a hundred times (so five runs a
+side, or more on one side for fewer on the other), and when it moves the
+middle by more than half a frame for a time, since frame times jitter by less
+than that. A comparison judges dozens of metrics, so a stray verdict can still
+turn up: claim a change by the metrics it was meant to move.
 
 Exit status is 0 when the runs were compared, 1 when a file cannot be read or
 the runs measured different graphs, and 2 when the arguments are wrong.
@@ -150,8 +152,17 @@ const (
 	tooFewRuns   verdict = "too few runs to judge"
 )
 
-// significance is how rarely noise alone may pass for a change.
+// significance is how rarely noise alone may pass for a change in one metric.
+// It is not divided among the metrics a comparison judges: they move together
+// within a scenario, and the half frame a time must also move filters most of
+// what noise lines up, so a stricter bound would ask for far more runs than
+// the false verdicts it saves.
 const significance = 0.01
+
+// sameDisplay is how far apart two refresh intervals may be and still be one
+// display's. The nearest refresh rates displays run at, 144 Hz and 165 Hz, are
+// 13% apart.
+const sameDisplay = 0.1
 
 // judge calls a change better or worse only when every run after is past
 // every run before, the separation is one noise makes less often than
@@ -186,10 +197,12 @@ type line interface {
 	report(w io.Writer)
 }
 
-// compared is a scenario both runs recorded in a browser, metric by metric.
+// compared is a scenario both runs recorded in a browser on displays drawing
+// frames every refresh, metric by metric.
 type compared struct {
 	browser, scenario string
 	before, after     side
+	refresh           time.Duration
 }
 
 // uncompared is a scenario, or a whole browser, at least one run has nothing
@@ -207,17 +220,29 @@ func compare(before, after results) ([]line, error) {
 		return nil, fmt.Errorf("the runs measured different graphs, %s (%.12s) and %s (%.12s)",
 			before.Graph.Name, before.Graph.SHA256, after.Graph.Name, after.Graph.SHA256)
 	}
-	var lines []line
-	for _, p := range pairs(before, after) {
-		b, berr := sideOf(before, p.browser, p.scenario)
-		a, aerr := sideOf(after, p.browser, p.scenario)
-		if berr != nil || aerr != nil {
-			lines = append(lines, uncompared{browser: p.browser, scenario: p.scenario, before: berr, after: aerr})
-			continue
-		}
-		lines = append(lines, compared{browser: p.browser, scenario: p.scenario, before: b, after: a})
+	ps := pairs(before, after)
+	lines := make([]line, len(ps))
+	for i, p := range ps {
+		lines[i] = lineOf(p, before, after)
 	}
 	return lines, nil
+}
+
+// lineOf is p compared, or why it cannot be. Runs on displays refreshing at
+// different rates are not compared: every frame time moves with the display,
+// and a faster one would pass for a faster page.
+func lineOf(p pair, before, after results) line {
+	b, berr := sideOf(before, p.browser, p.scenario)
+	a, aerr := sideOf(after, p.browser, p.scenario)
+	if berr != nil || aerr != nil {
+		return uncompared{browser: p.browser, scenario: p.scenario, before: berr, after: aerr}
+	}
+	br, ar := b.refresh(), a.refresh()
+	if float64(max(br, ar)-min(br, ar)) > float64(min(br, ar))*sameDisplay {
+		return uncompared{browser: p.browser, scenario: p.scenario,
+			before: fmt.Errorf("drawn every %s at rest", ms(br)), after: fmt.Errorf("drawn every %s at rest", ms(ar))}
+	}
+	return compared{browser: p.browser, scenario: p.scenario, before: b, after: a, refresh: br}
 }
 
 type pair struct {
@@ -282,10 +307,9 @@ func (c compared) report(w io.Writer) {
 	fmt.Fprintf(w, "%s %s: %d runs in %s → %d runs in %s\n", c.browser, c.scenario,
 		len(c.before.recordings), c.before.version, len(c.after.recordings), c.after.version)
 	table := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	refresh := c.before.refresh()
 	for _, m := range metrics {
 		b, a := spreadOf(m, c.before.recordings), spreadOf(m, c.after.recordings)
-		fmt.Fprintf(table, "  %s\t%s\t→ %s\t%s\n", m.name, b.show(m), a.show(m), judge(b, a, m.jitter(refresh)))
+		fmt.Fprintf(table, "  %s\t%s\t→ %s\t%s\n", m.name, b.show(m), a.show(m), judge(b, a, m.jitter(c.refresh)))
 	}
 	_ = table.Flush()
 }

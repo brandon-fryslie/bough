@@ -18,10 +18,17 @@ import (
 // stall while its median stays at rest.
 func stalled(t *testing.T, stall float64) take {
 	t.Helper()
+	return drawnEvery(t, 8.333, stall)
+}
+
+// drawnEvery is stalled on a display that starts a frame every refresh
+// milliseconds.
+func drawnEvery(t *testing.T, refresh, stall float64) take {
+	t.Helper()
 	frames := make([]float64, 80)
 	at := 1000.0
 	for i := range frames {
-		at += 8.333
+		at += refresh
 		if i == 40 {
 			at += stall
 		}
@@ -71,7 +78,7 @@ func verdicts(t *testing.T, before, after []take) map[string]verdict {
 	}
 	out := map[string]verdict{}
 	for _, m := range metrics {
-		out[m.name] = judge(spreadOf(m, c.before.recordings), spreadOf(m, c.after.recordings), m.jitter(c.before.refresh()))
+		out[m.name] = judge(spreadOf(m, c.before.recordings), spreadOf(m, c.after.recordings), m.jitter(c.refresh))
 	}
 	return out
 }
@@ -238,6 +245,48 @@ func TestWhatCannotBeComparedSaysWhy(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("the comparison does not say %q:\n%s", want, out.String())
 		}
+	}
+}
+
+// A scenario is compared only between runs drawn on displays refreshing at
+// one rate, since every frame time moves with the display: a faster display
+// is not a faster page.
+func TestRunsOnAnotherDisplayAreNotCompared(t *testing.T) {
+	for _, c := range []struct {
+		name          string
+		before, after float64
+		compared      bool
+	}{
+		{"one display", 8.333, 8.333, true},
+		{"one display, measured a little apart", 8.333, 8.6, true},
+		{"60 Hz, then 120 Hz", 16.667, 8.333, false},
+		{"144 Hz, then 120 Hz", 6.944, 8.333, false},
+	} {
+		lines, err := compare(
+			kept("a", measured{Scenario: "drag-pan", Runs: []take{drawnEvery(t, c.before, 0)}}),
+			kept("b", measured{Scenario: "drag-pan", Runs: []take{drawnEvery(t, c.after, 0)}}),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, got := lines[0].(compared); got != c.compared {
+			var out bytes.Buffer
+			lines[0].report(&out)
+			t.Errorf("%s: compared is %v, want %v: %s", c.name, got, c.compared, out.String())
+		}
+	}
+
+	lines, err := compare(
+		kept("a", measured{Scenario: "drag-pan", Runs: []take{drawnEvery(t, 16.667, 0)}}),
+		kept("b", measured{Scenario: "drag-pan", Runs: []take{drawnEvery(t, 8.333, 0)}}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	lines[0].report(&out)
+	if want := "chrome drag-pan: not compared; before, drawn every 16.7ms at rest; after, drawn every 8.3ms at rest"; !strings.Contains(out.String(), want) {
+		t.Errorf("said %q, want %q", out.String(), want)
 	}
 }
 

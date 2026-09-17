@@ -40,11 +40,13 @@ One run is noisy, so claim a change by comparing repeated runs taken on the
 same machine: `go run ./cmd/boughperf compare before.json after.json` shows
 each metric as the middle of its runs with the least and most any run
 reached. It calls a change better or worse only when every run after is past
-every run before, which noise alone does less than once in a hundred
-comparisons, so it needs five runs a side or more on one side for fewer on
-the other, and only when a frame time
-moved by more than half a frame, since frame times jitter by less than that.
-It refuses runs of different graphs.
+every run before, which noise alone does to one metric less than once in a
+hundred times, so it needs five runs a side or more on one side for fewer on
+the other, and only when a frame time moved by more than half a frame, since
+frame times jitter by less than that. A comparison judges dozens of metrics,
+so a stray verdict can still turn up: claim a change by the metrics it was
+meant to move. It refuses runs of different graphs, and does not compare a
+scenario whose runs were drawn on displays refreshing at different rates.
 
 Run `make lint test` before opening a pull request. CI runs the same commands
 on Linux, macOS and Windows.
