@@ -6,7 +6,9 @@
 package scenario
 
 import (
+	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/nickelsec/bough/internal/webdriver"
@@ -143,6 +145,18 @@ var All = []Scenario{
 		},
 		Took: func(before, after View) bool { return after.Note != "" && after.Note != before.Note },
 	},
+}
+
+// Named is the scenario called name.
+func Named(name string) (Scenario, error) {
+	names := make([]string, len(All))
+	for i, sc := range All {
+		if sc.Name == name {
+			return sc, nil
+		}
+		names[i] = sc.Name
+	}
+	return Scenario{}, fmt.Errorf("no scenario called %q; there are %s", name, strings.Join(names, ", "))
 }
 
 // scroll places sixty small wheel turns of delta pixels on bare canvas, as a

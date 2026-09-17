@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -91,6 +92,8 @@ func (e endpoint) call(ctx context.Context, method, path string, body io.Reader)
 // Session is one browser window under a driver's control.
 type Session struct {
 	endpoint
+
+	version string
 }
 
 // newSession asks the driver at e for a session in the named browser.
@@ -105,12 +108,32 @@ func newSession(ctx context.Context, e endpoint, browserName string) (*Session, 
 		return nil, err
 	}
 	var created struct {
-		SessionID string `json:"sessionId"`
+		SessionID    string `json:"sessionId"`
+		Capabilities struct {
+			BrowserVersion string `json:"browserVersion"`
+		} `json:"capabilities"`
 	}
 	if err := json.Unmarshal(value, &created); err != nil || created.SessionID == "" {
 		return nil, fmt.Errorf("webdriver: the driver made a session without naming it: %s", value)
 	}
-	return &Session{endpoint{e.base + "/session/" + url.PathEscape(created.SessionID)}}, nil
+	s := &Session{
+		endpoint: endpoint{e.base + "/session/" + url.PathEscape(created.SessionID)},
+		version:  created.Capabilities.BrowserVersion,
+	}
+	if s.version == "" {
+		// The session is open by now, and no driver closes its window when it
+		// is stopped, so refusing it means closing it.
+		refused := fmt.Errorf("webdriver: the driver made a session without saying which version of the browser it is: %s", value)
+		return nil, errors.Join(refused, s.Close(ctx))
+	}
+	return s, nil
+}
+
+// Version is the version of the browser the session is in, as its driver
+// reported it. A number measured in one version says nothing certain of
+// another.
+func (s *Session) Version() string {
+	return s.version
 }
 
 // Navigate loads url and returns once the page has loaded.

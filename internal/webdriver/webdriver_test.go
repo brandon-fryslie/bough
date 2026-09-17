@@ -25,6 +25,14 @@ type fakeServer struct {
 	sent    map[string]string
 }
 
+// was is whether command was sent at all.
+func (f *fakeServer) was(command string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_, ok := f.sent[command]
+	return ok
+}
+
 // body is what command was last sent.
 func (f *fakeServer) body(command string) string {
 	f.mu.Lock()
@@ -76,7 +84,7 @@ func sameJSON(t *testing.T, got, want string) bool {
 // and whatever the page hands back arrives as it was sent.
 func TestASessionSpeaksTheProtocol(t *testing.T) {
 	f, e := serve(t, map[string]reply{
-		"POST /session":                   {200, `{"value":{"sessionId":"s 1","capabilities":{}}}`},
+		"POST /session":                   {200, `{"value":{"sessionId":"s 1","capabilities":{"browserVersion":"26.3"}}}`},
 		"POST /session/s 1/url":           {200, `{"value":null}`},
 		"POST /session/s 1/execute/async": {200, `{"value":{"frames":[1.5]}}`},
 		"DELETE /session/s 1":             {200, `{"value":null}`},
@@ -98,6 +106,9 @@ func TestASessionSpeaksTheProtocol(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if s.Version() != "26.3" {
+		t.Errorf("the session is in version %q, want the 26.3 the driver reported", s.Version())
+	}
 	if !sameJSON(t, string(got), `{"frames":[1.5]}`) {
 		t.Errorf("script handed back %s", got)
 	}
@@ -121,7 +132,7 @@ func TestActionsReachTheDriverInTheProtocolsShape(t *testing.T) {
 	f, e := serve(t, map[string]reply{
 		"POST /s/actions": {200, `{"value":null}`},
 	})
-	s := &Session{endpoint{e.base + "/s"}}
+	s := &Session{endpoint: endpoint{e.base + "/s"}}
 	ctx := context.Background()
 
 	drag := Actions{Mouse: []MouseStep{Move{X: 10, Y: 20}, Press{}, Move{X: 110, Y: 20, Over: 250 * time.Millisecond}, Pause(16 * time.Millisecond), Release{}}}
@@ -156,7 +167,7 @@ func TestADriversComplaintArrivesInItsOwnWords(t *testing.T) {
 		"POST /s/actions": {502, `<html>bad gateway</html>`},
 		"DELETE /s":       {500, `{"value":{}}`},
 	})
-	s := &Session{endpoint{e.base + "/s"}}
+	s := &Session{endpoint: endpoint{e.base + "/s"}}
 	ctx := context.Background()
 
 	err := s.Navigate(ctx, "http://127.0.0.1:1/")
@@ -180,9 +191,9 @@ func TestARefusedSessionSaysWhatToSetUp(t *testing.T) {
 	_, e := serve(t, map[string]reply{
 		"POST /session": {500, `{"value":{"error":"session not created","message":"Could not create a session"}}`},
 	})
-	d := &Driver{browser: Safari(), endpoint: e}
+	d := &driver{browser: Safari(), endpoint: e}
 
-	_, err := d.NewSession(context.Background())
+	_, err := d.session(context.Background())
 	var complaint *Error
 	if !errors.As(err, &complaint) || !strings.Contains(err.Error(), "Could not create a session") {
 		t.Errorf("failed with %v, want the driver's reason", err)
@@ -192,12 +203,28 @@ func TestARefusedSessionSaysWhatToSetUp(t *testing.T) {
 	}
 }
 
+// A session whose driver will not say which version of the browser it is in
+// is refused, since whatever it measures could not be compared with anything,
+// and closed, since its window is open by then.
+func TestASessionWithoutAVersionIsRefused(t *testing.T) {
+	f, e := serve(t, map[string]reply{
+		"POST /session":       {200, `{"value":{"sessionId":"s 1","capabilities":{"browserName":"safari"}}}`},
+		"DELETE /session/s 1": {200, `{"value":null}`},
+	})
+	if _, err := newSession(context.Background(), e, "safari"); err == nil || !strings.Contains(err.Error(), "version") {
+		t.Errorf("opened with %v, want a refusal naming the missing version", err)
+	}
+	if !f.was("DELETE /session/s 1") {
+		t.Error("the refused session was left open")
+	}
+}
+
 // A driver that is not there says how to get one, and one that dies before it
 // answers says so instead of waiting out the clock.
 func TestADriverThatCannotRunSaysWhy(t *testing.T) {
 	ctx := context.Background()
 
-	_, err := Start(ctx, Chrome().WithDriver("/nonexistent/chromedriver"))
+	_, err := start(ctx, Chrome().WithDriver("/nonexistent/chromedriver"))
 	if err == nil || !strings.Contains(err.Error(), "npx @puppeteer/browsers install chromedriver") {
 		t.Errorf("a missing driver failed with %v, want how to install one", err)
 	}
@@ -207,10 +234,13 @@ func TestADriverThatCannotRunSaysWhy(t *testing.T) {
 	if !errors.As(err, &why) {
 		t.Errorf("a missing driver failed with %v, which dropped why", err)
 	}
+	if installed := Chrome().WithDriver("/nonexistent/chromedriver").Installed(); installed == nil || installed.Error() != err.Error() {
+		t.Errorf("a missing driver is installed as %v, and fails to start with %v; want the same reason", installed, err)
+	}
 
 	t.Setenv(fakeDriver, "exit")
 	begun := time.Now()
-	_, err = Start(ctx, Chrome().WithDriver(os.Args[0]))
+	_, err = start(ctx, Chrome().WithDriver(os.Args[0]))
 	if err == nil || !strings.Contains(err.Error(), "exited before it was ready") {
 		t.Errorf("a driver that exits failed with %v", err)
 	}
@@ -223,14 +253,14 @@ func TestADriverThatCannotRunSaysWhy(t *testing.T) {
 // output. Stopping the driver must not wait for that browser to go.
 func TestStoppingADriverDoesNotWaitOnWhatItLeftRunning(t *testing.T) {
 	t.Setenv(fakeDriver, "orphan")
-	d, err := Start(context.Background(), Chrome().WithDriver(os.Args[0]))
+	d, err := start(context.Background(), Chrome().WithDriver(os.Args[0]))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { endLeftover(t, d) })
 
 	begun := time.Now()
-	d.Stop()
+	d.stop()
 	if waited := time.Since(begun); waited > 5*time.Second {
 		t.Errorf("stopping took %v, waiting on the driver's leftover child", waited)
 	}
@@ -239,7 +269,7 @@ func TestStoppingADriverDoesNotWaitOnWhatItLeftRunning(t *testing.T) {
 // endLeftover ends the child the orphan left running, whose pid is all the
 // orphan prints. The child is this test binary, and Windows will not delete a binary
 // that is still running.
-func endLeftover(t *testing.T, d *Driver) {
+func endLeftover(t *testing.T, d *driver) {
 	t.Helper()
 	pid, err := strconv.Atoi(d.output.String())
 	if err != nil {

@@ -92,29 +92,23 @@ func withInput(b Browser, check func(*testing.T)) func(*testing.T) {
 	}
 }
 
-// open starts b's driver and a session in it, both ended when the test is.
+// open opens a window in b, closed when the test ends.
 func open(ctx context.Context, t *testing.T, b Browser) *Session {
 	t.Helper()
-	d, err := Start(ctx, b)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(d.Stop)
-	s, err := d.NewSession(ctx)
+	w, err := Open(ctx, b)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		// The test's own deadline may have passed by now; closing still has to
-		// happen, but not wait on a hung browser forever, or the driver is never
-		// stopped either.
+		// happen, but not wait on a hung browser forever.
 		closing, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
-		if err := s.Close(closing); err != nil {
+		if err := w.Close(closing); err != nil {
 			t.Error(err)
 		}
 	})
-	return s
+	return w.Session
 }
 
 // see loads the page, performs a, and hands back what the page saw.

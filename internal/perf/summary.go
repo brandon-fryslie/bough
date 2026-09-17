@@ -6,29 +6,38 @@ import (
 	"time"
 )
 
-// Summary is how a recording drew, in numbers that compare across runs and
-// browsers.
+// Summary is how a scenario drew, in numbers that compare across runs and
+// browsers. Durations are written in nanoseconds, as their names say.
 type Summary struct {
 	// Refresh is the browser's frame interval at rest, learned from the quiet
 	// frames before input. Everything else is judged against it, so a 120 Hz
 	// display and a 60 Hz one are held to what each can actually do.
-	Refresh time.Duration
+	Refresh time.Duration `json:"refresh_ns"`
+
+	// Inputs is how many input events reached the page, and Span how long the
+	// frames that drew them took in all. They are the input as it arrived,
+	// which is not always as it was sent: a driver can stretch a gesture it
+	// was asked to play quickly.
+	Inputs int           `json:"inputs"`
+	Span   time.Duration `json:"span_ns"`
 
 	// Frames is how many frame intervals overlapped the input.
-	Frames int
+	Frames int `json:"frames"`
 
 	// Median, P95 and Worst describe those intervals. At rest each would be
 	// Refresh.
-	Median time.Duration
-	P95    time.Duration
-	Worst  time.Duration
+	Median time.Duration `json:"median_ns"`
+	P95    time.Duration `json:"p95_ns"`
+	Worst  time.Duration `json:"worst_ns"`
 
 	// Missed is how many frames the browser would have started at its resting
 	// rate but did not, because it was busy.
-	Missed int
+	Missed int `json:"missed"`
 }
 
-// Summarize judges a recording.
+// Summarize judges recordings of one scenario in one browser as one, their
+// intervals pooled, so a stall that one run happened to hit weighs as the
+// frames it cost among every run's frames rather than as a whole run.
 //
 // A frame's time is when it starts, so the interval beginning at a frame is
 // what that frame cost. The intervals that count end with the one beginning at
@@ -37,13 +46,20 @@ type Summary struct {
 // there, while input delivered inside a frame, as Chrome does, leaves that
 // interval at rest. The quiet intervals are every one before those.
 // ParseRecording guarantees both are there.
-func Summarize(r Recording) Summary {
-	first, last := r.inputs[0], r.inputs[len(r.inputs)-1]
-
-	// [LAW:dataflow-not-control-flow] which intervals count is where the
-	// slices are cut, not a decision made per interval.
-	quiet := gaps(r.frames[:first])
-	busy := gaps(r.frames[first-1 : last+2])
+func Summarize(r Recording, more ...Recording) Summary {
+	var quiet, busy []time.Duration //nolint:prealloc // how many intervals the runs pool is only known once they are cut
+	var inputs int
+	var span time.Duration
+	for _, r := range append([]Recording{r}, more...) {
+		first, last := r.inputs[0], r.inputs[len(r.inputs)-1]
+		// [LAW:dataflow-not-control-flow] which intervals count is where the
+		// slices are cut, not a decision made per interval.
+		drawing := r.frames[first-1 : last+2]
+		quiet = append(quiet, gaps(r.frames[:first])...)
+		busy = append(busy, gaps(drawing)...)
+		inputs += len(r.inputs)
+		span += drawing[len(drawing)-1] - drawing[0]
+	}
 
 	refresh := percentile(quiet, 0.5)
 	missed := 0
@@ -53,6 +69,8 @@ func Summarize(r Recording) Summary {
 
 	return Summary{
 		Refresh: refresh,
+		Inputs:  inputs,
+		Span:    span,
 		Frames:  len(busy),
 		Median:  percentile(busy, 0.5),
 		P95:     percentile(busy, 0.95),

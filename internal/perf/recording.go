@@ -36,15 +36,19 @@ type Recording struct {
 	inputs []int
 }
 
+// wire is a recording as the probe hands it over: frame start times in
+// milliseconds, and the index of the frame that drew each input. Pointers,
+// because JSON has no NaN: the page writes a broken time as null, which would
+// otherwise arrive as a plausible zero.
+type wire struct {
+	Frames []*float64 `json:"frames"`
+	Inputs []*int     `json:"inputs"`
+}
+
 // ParseRecording checks what the probe handed back and keeps it as a
 // Recording. Anything a working probe could not have produced is an error.
 func ParseRecording(raw []byte) (Recording, error) {
-	// Pointers, because JSON has no NaN: the page writes a broken time as
-	// null, which would otherwise arrive here as a plausible zero.
-	var wire struct {
-		Frames []*float64 `json:"frames"`
-		Inputs []*int     `json:"inputs"`
-	}
+	var wire wire
 	if err := json.Unmarshal(raw, &wire); err != nil {
 		return Recording{}, fmt.Errorf("reading the probe's recording: %w", err)
 	}
@@ -86,6 +90,33 @@ func ParseRecording(raw []byte) (Recording, error) {
 	}
 
 	return Recording{frames: frames, inputs: inputs}, nil
+}
+
+// MarshalJSON writes r in the shape the probe handed it over, so a recording
+// kept in a file reads back through ParseRecording as the same recording.
+func (r Recording) MarshalJSON() ([]byte, error) {
+	w := wire{Frames: make([]*float64, len(r.frames)), Inputs: make([]*int, len(r.inputs))}
+	for i, f := range r.frames {
+		ms := float64(f) / float64(time.Millisecond)
+		w.Frames[i] = &ms
+	}
+	for i := range r.inputs {
+		w.Inputs[i] = &r.inputs[i]
+	}
+	return json.Marshal(w)
+}
+
+// UnmarshalJSON reads a kept recording back, checked as ParseRecording checks
+// the probe's.
+//
+// [LAW:single-enforcer] ParseRecording is the one way a Recording is made.
+func (r *Recording) UnmarshalJSON(raw []byte) error {
+	parsed, err := ParseRecording(raw)
+	if err != nil {
+		return err
+	}
+	*r = parsed
+	return nil
 }
 
 // present is the values the page wrote, refusing any it left out and any

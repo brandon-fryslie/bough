@@ -2,6 +2,7 @@ package perf
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -138,6 +139,74 @@ func TestStallsOutsideTheInputAreNotCounted(t *testing.T) {
 
 	if s.Missed != 0 {
 		t.Errorf("missed %d, counting a stall after the input ended", s.Missed)
+	}
+}
+
+// Repeated runs are judged as one: their intervals pooled, so a stall in one
+// run is the frames it cost among every run's, and every run's input counts.
+func TestRunsAreJudgedTogether(t *testing.T) {
+	steady := page{interval: 16.667, frames: 60}.with(35, 45)
+	stalled := page{interval: 16.667, frames: 60, late: map[int]float64{40: 33.334}}.with(35, 45)
+	parse := func(p page) Recording {
+		r, err := ParseRecording(p.raw(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+
+	s := Summarize(parse(steady), parse(stalled), parse(steady))
+
+	if s.Frames != 36 {
+		t.Errorf("%d frames judged, want the 12 of each of three runs", s.Frames)
+	}
+	if s.Missed != 2 {
+		t.Errorf("missed %d, want the 2 the one stall cost", s.Missed)
+	}
+	if !near(s.Worst, 50001*time.Microsecond) || !near(s.Median, 16667*time.Microsecond) {
+		t.Errorf("worst %v and median %v, want the stall as worst and the rest at rest", s.Worst, s.Median)
+	}
+	if s.Inputs != 6 {
+		t.Errorf("%d inputs, want the 2 of each run", s.Inputs)
+	}
+}
+
+// Input is reported as it arrived: how many events reached the page, and how
+// long the frames drawing them took, whatever pace they were sent at.
+func TestInputIsReportedAsItArrived(t *testing.T) {
+	s := page{interval: 16.667, frames: 60, late: map[int]float64{40: 33.334}}.with(35, 38, 45).summary(t)
+
+	if s.Inputs != 3 {
+		t.Errorf("%d inputs, want 3", s.Inputs)
+	}
+	// Twelve intervals, one of them three long.
+	if want := 14 * 16667 * time.Microsecond; !near(s.Span, want) {
+		t.Errorf("span %v, want %v", s.Span, want)
+	}
+}
+
+// A recording kept in a file reads back as the recording that was kept.
+func TestAKeptRecordingReadsBackTheSame(t *testing.T) {
+	want, err := ParseRecording(page{interval: 8.333, frames: 60, late: map[int]float64{40: 0.0007}}.with(35, 36, 45).raw(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got Recording
+	if err := json.Unmarshal(kept, &got); err != nil {
+		t.Fatalf("a kept recording did not read back: %v\n%s", err, kept)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("read back %+v, kept %+v", got, want)
+	}
+
+	// Reading back is ParseRecording's check, so a kept file cannot hold what
+	// no probe produces.
+	if err := json.Unmarshal([]byte(`{"frames":[1,2,3],"inputs":[]}`), &got); err == nil {
+		t.Error("read back a recording with no input")
 	}
 }
 

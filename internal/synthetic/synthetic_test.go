@@ -3,6 +3,7 @@ package synthetic
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -257,5 +258,28 @@ func TestAlongsideNamesEverythingOnce(t *testing.T) {
 	}
 	if len(shas) != len(g.Totals.Commits) {
 		t.Errorf("%d commits share %d hashes", len(g.Totals.Commits), len(shas))
+	}
+}
+
+// Every size a measurement can ask for by name is a history NewShape would
+// have made, with no two sizes the same.
+func TestEveryNamedSizeIsAShapeThatCanExist(t *testing.T) {
+	seen := map[Shape]string{}
+	for _, name := range SizeNames() {
+		got, err := Sized(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, err := NewShape(got.sittings, got.tasks, got.prompts, got.links)
+		if err != nil || got != want {
+			t.Errorf("%s is %+v, which NewShape makes as %+v, %v", name, got, want, err)
+		}
+		if other, ok := seen[got]; ok {
+			t.Errorf("%s and %s are the same size", name, other)
+		}
+		seen[got] = name
+	}
+	if _, err := Sized("huge"); err == nil || !strings.Contains(err.Error(), "small, medium, large") {
+		t.Errorf("an unknown size failed with %v, want the sizes there are", err)
 	}
 }

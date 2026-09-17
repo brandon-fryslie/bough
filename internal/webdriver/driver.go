@@ -51,14 +51,43 @@ func Safari() Browser {
 	}
 }
 
+// Browsers is every browser bough can drive.
+func Browsers() []Browser {
+	return []Browser{Chrome(), Safari()}
+}
+
 // Named is the browser called name: chrome or safari.
 func Named(name string) (Browser, error) {
-	for _, b := range []Browser{Chrome(), Safari()} {
+	for _, b := range Browsers() {
 		if b.name == name {
 			return b, nil
 		}
 	}
 	return Browser{}, fmt.Errorf("webdriver: no browser called %q; there are chrome and safari", name)
+}
+
+// Name is what b is called, as Named knows it.
+func (b Browser) Name() string {
+	return b.name
+}
+
+// Installed is nil when b's driver program is there to run, or why it is not
+// and what to set up.
+func (b Browser) Installed() error {
+	_, err := b.locate()
+	return err
+}
+
+// locate is the path of b's driver program.
+//
+// [LAW:single-enforcer] the one place a driver is looked for, so Installed
+// and Open cannot disagree about whether it is there.
+func (b Browser) locate() (string, error) {
+	path, err := exec.LookPath(b.driver)
+	if err != nil {
+		return "", fmt.Errorf("webdriver: cannot run a driver for %s (%s): %w", b.name, b.setup, err)
+	}
+	return path, nil
 }
 
 // Input is whether input performed through b's driver reaches the page: nil
@@ -77,8 +106,42 @@ func (b Browser) WithDriver(path string) Browser {
 	return b
 }
 
-// Driver is a running driver program, ready for sessions.
-type Driver struct {
+// Window is a browser window under bough's control, in a driver program
+// started for it alone.
+type Window struct {
+	*Session
+
+	driver *driver
+}
+
+// Open starts b's driver and opens a window in it. Close the window when done:
+// closing it ends the driver too, and a window never closed stays open.
+//
+// [LAW:no-ambient-temporal-coupling] the window owns its driver, so the
+// session is always closed before the driver it lives in is stopped.
+func Open(ctx context.Context, b Browser) (*Window, error) {
+	d, err := start(ctx, b)
+	if err != nil {
+		return nil, err
+	}
+	s, err := d.session(ctx)
+	if err != nil {
+		d.stop()
+		return nil, err
+	}
+	return &Window{Session: s, driver: d}, nil
+}
+
+// Close ends the session, closing the window, and then stops the driver,
+// whether or not the session would end.
+func (w *Window) Close(ctx context.Context) error {
+	err := w.Session.Close(ctx)
+	w.driver.stop()
+	return err
+}
+
+// driver is a running driver program, ready for sessions.
+type driver struct {
 	endpoint
 
 	browser Browser
@@ -87,27 +150,27 @@ type Driver struct {
 	output  *lockedBuffer // everything the process printed
 }
 
-// ready is how long a driver has to start answering before Start gives up.
+// ready is how long a driver has to start answering before start gives up.
 const ready = 10 * time.Second
 
-// Start runs b's driver on a free local port and returns once it answers.
-// Stop it when done, or the program outlives the run.
-func Start(ctx context.Context, b Browser) (*Driver, error) {
-	path, err := exec.LookPath(b.driver)
+// start runs b's driver on a free local port and returns once it answers.
+// stop it when done, or the program outlives the run.
+func start(ctx context.Context, b Browser) (*driver, error) {
+	path, err := b.locate()
 	if err != nil {
-		return nil, fmt.Errorf("webdriver: cannot run a driver for %s (%s): %w", b.name, b.setup, err)
+		return nil, err
 	}
 	port, err := freePort()
 	if err != nil {
 		return nil, fmt.Errorf("webdriver: finding a port for %s: %w", b.driver, err)
 	}
 
-	d := &Driver{
+	d := &driver{
 		browser:  b,
 		endpoint: endpoint{fmt.Sprintf("http://127.0.0.1:%d", port)},
-		// The driver lives until Stop, not until ctx ends, so it is not tied
+		// The driver lives until stop, not until ctx ends, so it is not tied
 		// to ctx.
-		process: exec.Command(path, b.listen(port)...), //#nosec G204 -- the path is the driver the caller chose
+		process: exec.Command(path, b.listen(port)...), //#nosec G204 G702 -- the path is the driver the caller chose
 		exited:  make(chan struct{}),
 		output:  &lockedBuffer{},
 	}
@@ -125,7 +188,7 @@ func Start(ctx context.Context, b Browser) (*Driver, error) {
 	}()
 
 	if err := d.await(ctx); err != nil {
-		d.Stop()
+		d.stop()
 		return nil, err
 	}
 	return d, nil
@@ -133,7 +196,7 @@ func Start(ctx context.Context, b Browser) (*Driver, error) {
 
 // await polls the driver's status until it says it is ready, it exits, or
 // time runs out.
-func (d *Driver) await(ctx context.Context) error {
+func (d *driver) await(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, ready)
 	defer cancel()
 	tick := time.NewTicker(50 * time.Millisecond)
@@ -159,8 +222,8 @@ func (d *Driver) await(ctx context.Context) error {
 	}
 }
 
-// NewSession opens a window in the driver's browser.
-func (d *Driver) NewSession(ctx context.Context) (*Session, error) {
+// session opens a window in the driver's browser.
+func (d *driver) session(ctx context.Context) (*Session, error) {
 	s, err := newSession(ctx, d.endpoint, d.browser.name)
 	var refused *Error
 	if errors.As(err, &refused) && refused.Code == "session not created" {
@@ -169,10 +232,10 @@ func (d *Driver) NewSession(ctx context.Context) (*Session, error) {
 	return s, err
 }
 
-// Stop ends the driver program and waits for it to go. Close sessions first:
+// stop ends the driver program and waits for it to go. Close sessions first:
 // no driver closes its browser when it is killed, so a session never closed
 // leaves its window open.
-func (d *Driver) Stop() {
+func (d *driver) stop() {
 	_ = d.process.Process.Kill()
 	<-d.exited
 }

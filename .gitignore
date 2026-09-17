@@ -7,6 +7,9 @@
 *.test
 *.out
 
+# what make perf measured, kept to compare on this machine rather than shared
+/perf-results/
+
 # intermediate output of assets/build.py. The results it produces,
 # internal/server/fonts.css and internal/server/img, are committed because the
 # binary embeds them and a clone has to build without running Python.
