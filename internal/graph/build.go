@@ -49,6 +49,15 @@ type Options struct {
 	// agent's own bookkeeping, which is why DefaultOptions asks for it.
 	Ambience metrics.Ambience
 
+	// Elsewhere is the edge's answer about where the sittings' work outside
+	// the project landed, which Visited says how to ask for. Left empty,
+	// nothing is recorded as done elsewhere.
+	Elsewhere Elsewhere
+
+	// MinVisit is the fewest edits a sitting's work in another family needs to
+	// be recorded, when it committed nothing there.
+	MinVisit int
+
 	// Now supplies the timestamp, so tests can pin it.
 	Now func() time.Time
 }
@@ -65,6 +74,7 @@ func DefaultOptions(made []agent.MadeFor) Options {
 		Rollup:   rollup.DefaultOptions(),
 		Links:    rollup.DefaultLinkOptions(),
 		Ambience: metrics.Ambience{Made: made},
+		MinVisit: 2,
 		Now:      time.Now,
 	}
 }
@@ -82,38 +92,41 @@ func Build(p family.Project, sessions []agent.Session, opt Options) Graph {
 		opt.Now = time.Now
 	}
 
-	// Everything below writes into the turns it is given: onlyHere drops
-	// commits made elsewhere, and matching against the repository rewrites the
-	// hashes. Those edits used to land in the caller's own slices, so calling
-	// Build twice on one set of sessions gave two different answers and
-	// nothing else could reuse them afterwards.
-	sessions = clone(sessions)
+	sessions = prepared(p, sessions)
 
-	// A commit made in another repository is not this project's work, whether
-	// or not the repository can be read, so it goes first either way. First
-	// of all, before delegated work is folded into the turn that asked for it:
-	// a sub-agent's commit moved relative to the directory its own session
-	// ran in, which may be another of the project's directories.
-	onlyHere(p, sessions)
+	// Each commit is matched against the repository it was made in: the
+	// project's own against the project's, and one made elsewhere against
+	// that family's.
+	made := committed(sessions)
+	repoRead := fromRepo(opt.Repo, slices.DeleteFunc(slices.Clone(made), func(c *agent.Commit) bool { return c.Dir != "" }))
+	opt.Elsewhere.confirm(p, made)
 
-	// Delegated work belongs inside the turn that asked for it, so it is put
-	// back before anything is measured or divided. Doing it here rather than in
-	// each agent keeps the sub-agent's own session intact up to this point,
-	// which is what makes its prompts and tokens countable at all.
-	sessions = fold(sessions)
-	repoRead := fromRepo(opt.Repo, sessions)
-
-	var goals []rollup.Goal
-	titles := map[int]string{}
-
+	// A sitting is divided out of one session, so the directory its session
+	// ran in is the one its relative paths start from.
+	type sitting struct {
+		goal      rollup.Goal
+		start     time.Time
+		title     string
+		elsewhere []Visit
+	}
+	sittings := make([]sitting, 0, len(sessions))
 	for _, sess := range sessions {
 		tasks := segment.Split(sess.Turns, opt.Segment)
 		for _, g := range rollup.Group(tasks, opt.Rollup) {
-			titles[len(goals)] = sess.Title
-			goals = append(goals, g)
+			away := visits(p, g.Turns(), sess.Dir, opt)
+			for j := range g.Tasks {
+				g.Tasks[j].Turns = ours(g.Tasks[j].Turns)
+			}
+			sittings = append(sittings, sitting{goal: g, start: first(g.Turns()), title: sess.Title, elsewhere: away})
 		}
 	}
-	goals, titles = inTimeOrder(goals, titles)
+	// By when each started. Stable, so goals starting at the same moment stay
+	// in the order their sessions were read.
+	slices.SortStableFunc(sittings, func(a, b sitting) int { return a.start.Compare(b.start) })
+	goals := make([]rollup.Goal, len(sittings))
+	for i, s := range sittings {
+		goals[i] = s.goal
+	}
 
 	g := Graph{
 		Schema:    SchemaVersion,
@@ -135,11 +148,12 @@ func Build(p family.Project, sessions []agent.Session, opt Options) Graph {
 		everyTurn = append(everyTurn, turns...)
 
 		out := Goal{
-			ID:     fmt.Sprintf("g%d", i+1),
-			Label:  rollup.Label(turns),
-			Title:  titles[i],
-			Period: rollup.Period(first(turns), last(turns)),
-			Stats:  statsOf(turns, opt.Ambience),
+			ID:        fmt.Sprintf("g%d", i+1),
+			Label:     rollup.Label(turns),
+			Title:     sittings[i].title,
+			Period:    rollup.Period(first(turns), last(turns)),
+			Stats:     statsOf(turns, opt.Ambience),
+			Elsewhere: sittings[i].elsewhere,
 		}
 		for j, t := range goal.Tasks {
 			out.Tasks = append(out.Tasks, Task{
@@ -169,33 +183,6 @@ func Build(p family.Project, sessions []agent.Session, opt Options) Graph {
 	slices.SortStableFunc(everyTurn, func(a, b agent.Turn) int { return a.At.Compare(b.At) })
 	g.Totals = statsOf(everyTurn, opt.Ambience)
 	return g
-}
-
-// inTimeOrder sorts goals by when they started, keeping each one's session
-// title with it.
-func inTimeOrder(goals []rollup.Goal, titles map[int]string) ([]rollup.Goal, map[int]string) {
-	type pair struct {
-		goal  rollup.Goal
-		title string
-	}
-	pairs := make([]pair, len(goals))
-	for i, g := range goals {
-		pairs[i] = pair{g, titles[i]}
-	}
-	// Insertion sort keeps this stable, so goals starting at the same moment
-	// stay in the order their sessions were read.
-	for i := 1; i < len(pairs); i++ {
-		for j := i; j > 0 && first(pairs[j].goal.Turns()).Before(first(pairs[j-1].goal.Turns())); j-- {
-			pairs[j], pairs[j-1] = pairs[j-1], pairs[j]
-		}
-	}
-	out := make([]rollup.Goal, len(pairs))
-	newTitles := make(map[int]string, len(pairs))
-	for i, p := range pairs {
-		out[i] = p.goal
-		newTitles[i] = p.title
-	}
-	return out, newTitles
 }
 
 func statsOf(turns []agent.Turn, ambience metrics.Ambience) Stats {
@@ -317,7 +304,7 @@ const matchWindow = 90 * time.Second
 // or is on a machine without git leaves the transcript's own account standing.
 // fromRepo fills in what the transcript could not say, and reports whether the
 // repository was actually consulted.
-func fromRepo(h repo.History, sessions []agent.Session) bool {
+func fromRepo(h repo.History, made []*agent.Commit) bool {
 	// Nothing was consulted, so nothing can be confirmed or contradicted. The
 	// hashes the transcript carried stay as they are: unverified, but the best
 	// that is known. Clearing them here would empty every hash on a machine
@@ -325,23 +312,6 @@ func fromRepo(h repo.History, sessions []agent.Session) bool {
 	if !h.Read {
 		return false
 	}
-	// Every commit the agent made, gathered before any of them is matched.
-	//
-	// Matching one at a time as they were walked let the order sessions
-	// happened to be in decide the answer. A repository commit is claimed by
-	// the first agent commit to reach it, so when two fell inside the same
-	// window the one visited first took it, whether or not it was the closer.
-	// Sessions are grouped by file rather than by time, so that order is not
-	// even the order the work happened in.
-	var made []*agent.Commit
-	for _, sess := range sessions {
-		for i := range sess.Turns {
-			for j := range sess.Turns[i].Committed {
-				made = append(made, &sess.Turns[i].Committed[j])
-			}
-		}
-	}
-
 	for _, c := range pair(made, h.Commits, matchWindow) {
 		// The repository was read and has no commit here, so any hash the
 		// transcript carried is one the repository can no longer reach:
@@ -364,30 +334,62 @@ func directories(p family.Project) []string {
 	return dirs
 }
 
-// onlyHere drops commits the agent made in some other repository.
+// prepared is the sessions as every stage below reads them: copied, each
+// commit placed, and delegated work folded in.
+func prepared(p family.Project, sessions []agent.Session) []agent.Session {
+	// Everything below writes into the turns it is given: placing a commit
+	// rewrites its directory, and matching against the repository rewrites the
+	// hashes. Those edits used to land in the caller's own slices, so calling
+	// Build twice on one set of sessions gave two different answers and
+	// nothing else could reuse them afterwards.
+	sessions = clone(sessions)
+
+	// Before delegated work is folded into the turn that asked for it: a
+	// sub-agent's commit moved relative to the directory its own session ran
+	// in, which may be another of the project's directories.
+	anchor(p, sessions)
+
+	// Delegated work belongs inside the turn that asked for it, so it is put
+	// back before anything is measured or divided. Doing it here rather than in
+	// each agent keeps the sub-agent's own session intact up to this point,
+	// which is what makes its prompts and tokens countable at all.
+	return fold(sessions)
+}
+
+// committed is every commit the agent made, gathered before any of them is
+// matched.
 //
-// A session about one project regularly commits in another: a tool and its
-// website worked on together, a fix made in a dependency. Those commits happen,
-// but they are not this project's, and counting them puts work on the diagram
-// that was done somewhere else. Ten of one project's forty seven commit calls
-// were made in a sibling repository.
-//
-// A command that does not move is committing where the session is, which is
-// this project. So is one that moves into another of the family's
-// directories: a worktree session that runs `cd <main checkout> && git
-// commit` committed this project's work, which comparing against the one
-// directory the session ran in used to drop.
-func onlyHere(p family.Project, sessions []agent.Session) {
+// Matching one at a time as they were walked let the order sessions happened
+// to be in decide the answer. A repository commit is claimed by the first
+// agent commit to reach it, so when two fell inside the same window the one
+// visited first took it, whether or not it was the closer. Sessions are
+// grouped by file rather than by time, so that order is not even the order the
+// work happened in.
+func committed(sessions []agent.Session) []*agent.Commit {
+	var made []*agent.Commit
 	for _, sess := range sessions {
 		for i := range sess.Turns {
-			kept := sess.Turns[i].Committed[:0]
-			for _, c := range sess.Turns[i].Committed {
-				if here(c.Dir, sess.Dir, p) {
-					kept = append(kept, c)
-				}
+			for j := range sess.Turns[i].Committed {
+				made = append(made, &sess.Turns[i].Committed[j])
 			}
-			sess.Turns[i].Committed = kept
 		}
+	}
+	return made
+}
+
+// confirm matches each commit made in another family against that family's
+// repository, all of one family's together, as fromRepo does the project's.
+func (e Elsewhere) confirm(p family.Project, made []*agent.Commit) {
+	byFamily := map[string][]*agent.Commit{}
+	for _, c := range made {
+		if pl, ok := e.CommittedIn(p, c.Dir); ok {
+			byFamily[pl.Family.Key()] = append(byFamily[pl.Family.Key()], c)
+		}
+	}
+	// A family missing from Repos was not read, which fromRepo takes as it
+	// takes the project's own unread repository: the hashes stand unchecked.
+	for key, commits := range byFamily {
+		fromRepo(e.Repos[key], commits)
 	}
 }
 

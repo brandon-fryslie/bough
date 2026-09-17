@@ -96,6 +96,32 @@ type Goal struct {
 
 	Stats Stats  `json:"stats"`
 	Tasks []Task `json:"tasks"`
+
+	// Elsewhere is the work this sitting did in other projects, one entry for
+	// each other family it worked in, most edited first. It is not hierarchy:
+	// neither project owns the other.
+	Elsewhere []Visit `json:"elsewhere,omitempty"`
+}
+
+// Visit is the work one sitting did in a family other than its own.
+type Visit struct {
+	// Family identifies the other family: its path as family.Family.Key
+	// compares it, the same however a path into it was spelled.
+	Family string `json:"family"`
+
+	// Path is the directory the other family is known by.
+	Path string `json:"path"`
+
+	// Files are the files edited there, most edited first, each where it
+	// really is once symlinks are followed.
+	Files []FileCount `json:"files,omitempty"`
+
+	// Commits are what the sitting committed there, in order.
+	Commits []Commit `json:"commits,omitempty"`
+
+	// RepoRead says the other family's repository was consulted, and means
+	// for these commits what Project.RepoRead means for the project's own.
+	RepoRead bool `json:"repoRead"`
 }
 
 // Task is a run of turns working towards one thing.
