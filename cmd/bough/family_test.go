@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -204,5 +205,40 @@ func TestARelativePathOpensTheFamilyItIsIn(t *testing.T) {
 	}
 	if g := parsed(t, out.Bytes()); g.Project.Name != "site.com" {
 		t.Errorf("bough . opened %q, want the project it was run in", g.Project.Name)
+	}
+}
+
+// A name is a name, wherever bough is run. Taken as a path from inside a
+// repository with history, a name that is no directory there resolved to that
+// repository and opened it instead of the project named.
+func TestANameOpensTheProjectNamedFromInsideAnother(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	here, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("git", "init", "-q", here)
+	// Without whatever repository a hook exported, or git would init that one.
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "GIT_") {
+			cmd.Env = append(cmd.Env, kv)
+		}
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	root := t.TempDir()
+	sitting(t, root, filepath.ToSlash(here), 2, filepath.ToSlash(here)+"/main.go")
+	sitting(t, root, "/work/beta", 1, "/work/beta/main.go")
+	t.Chdir(here)
+
+	var out, errs bytes.Buffer
+	if err := run([]string{"beta", "--json", "--agent", "claude", "--root", root}, &out, &errs); err != nil {
+		t.Fatal(err)
+	}
+	if g := parsed(t, out.Bytes()); g.Project.Name != "beta" {
+		t.Errorf("bough beta opened %q from inside another repository", g.Project.Name)
 	}
 }

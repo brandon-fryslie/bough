@@ -459,21 +459,37 @@ func ago(t time.Time) string {
 // it under, whichever spelling it was written in: the same normaliser the rest
 // of the tool compares paths with, which understands a transcript written on
 // Windows and read anywhere else.
-//
-// A relative path is taken from where bough was run, since that is where the
-// person typing it is: `bough .` is the project they are standing in.
-func byPath(projects []family.Project, families *family.Resolver, path string) (family.Project, bool) {
-	abs, err := filepath.Abs(path)
-	if err != nil {
+func byPath(projects []family.Project, families *family.Resolver, arg string) (family.Project, bool) {
+	dir, ok := place(arg)
+	if !ok {
 		return family.Project{}, false
 	}
-	want := families.Resolve(abs)
+	want := families.Resolve(dir)
 	for _, p := range projects {
 		if p.Is(want) {
 			return p, true
 		}
 	}
 	return family.Project{}, false
+}
+
+// place is the directory an argument names, when it names one.
+//
+// [LAW:parse-dont-validate] An absolute path is a place whether or not it
+// still exists, since a deleted worktree's path still says whose it was. A
+// relative one is a place only when it exists from where bough was run, as
+// `bough .` does. Anything else is a name: taken as a path from the working
+// directory, a name that is no directory there resolved to the repository
+// bough was run in and opened that instead of the project named.
+func place(arg string) (string, bool) {
+	if filepath.IsAbs(arg) || strings.HasPrefix(filepath.ToSlash(arg), "/") {
+		return arg, true
+	}
+	if info, err := os.Stat(arg); err != nil || !info.IsDir() {
+		return "", false
+	}
+	abs, err := filepath.Abs(arg)
+	return abs, err == nil
 }
 
 // writeList prints one line per project, in columns wide enough for what is
