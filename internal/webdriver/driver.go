@@ -21,6 +21,7 @@ type Browser struct {
 	driver string                  // the driver program, by name or path
 	listen func(port int) []string // the driver's arguments to serve on port
 	setup  string                  // what to set up when the driver or browser is not ready
+	drops  string                  // what was seen of input sent through the driver not reaching the page, if it does not
 }
 
 // Chrome is Google Chrome, driven by a chromedriver matching its version.
@@ -43,7 +44,31 @@ func Safari() Browser {
 		listen: func(port int) []string { return []string{"-p", strconv.Itoa(port)} },
 		setup: "safaridriver ships with Safari on macOS; " +
 			"turn on Safari > Settings > Developer > Allow remote automation",
+		// Seen in Safari 26.3 on macOS 26.3: most wheel steps in an action
+		// sequence reach the page as no event, and sequences after the first in
+		// a session reach it as nothing, though the driver reports success.
+		drops: "safaridriver drops most of the input it is sent",
 	}
+}
+
+// Named is the browser called name: chrome or safari.
+func Named(name string) (Browser, error) {
+	for _, b := range []Browser{Chrome(), Safari()} {
+		if b.name == name {
+			return b, nil
+		}
+	}
+	return Browser{}, fmt.Errorf("webdriver: no browser called %q; there are chrome and safari", name)
+}
+
+// Input is whether input performed through b's driver reaches the page: nil
+// when it does, or what was seen of it not arriving. The driver reports
+// success either way, so this is the only place that says.
+func (b Browser) Input() error {
+	if b.drops == "" {
+		return nil
+	}
+	return errors.New(b.drops)
 }
 
 // WithDriver is b driven by the driver program at path.
