@@ -71,7 +71,9 @@ func TestReadAgainstARealRepository(t *testing.T) {
 	run := func(args ...string) {
 		t.Helper()
 		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-		cmd.Env = append(cmd.Environ(),
+		// Scrubbed as bough scrubs it, or a GIT_DIR exported by a hook would
+		// have these commands build the fixture inside that repository.
+		cmd.Env = append(withoutGitEnv(cmd.Environ()),
 			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com",
 			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com")
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -110,9 +112,11 @@ func TestWithoutGitEnv(t *testing.T) {
 		"GIT_CEILING_DIRECTORIES=/Users", "GIT_OBJECT_DIRECTORY=/q",
 		"GIT_EXEC_PATH=/opt/git/libexec", "GIT_TRACE=1", "GIT_CONFIG_GLOBAL=/x/gitconfig",
 		"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=safe.directory", "GIT_CONFIG_VALUE_0=*",
+		"GIT_DISCOVERY_ACROSS_FILESYSTEM=1",
 	})
 	want := []string{"HOME=/Users/bmf", "GIT_EXEC_PATH=/opt/git/libexec", "GIT_TRACE=1", "GIT_CONFIG_GLOBAL=/x/gitconfig",
-		"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=safe.directory", "GIT_CONFIG_VALUE_0=*"}
+		"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=safe.directory", "GIT_CONFIG_VALUE_0=*",
+		"GIT_DISCOVERY_ACROSS_FILESYSTEM=1"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Errorf("kept %v, want %v", got, want)
 	}
@@ -159,7 +163,9 @@ func TestDiskNamesTheMainTree(t *testing.T) {
 	run := func(dir string, args ...string) {
 		t.Helper()
 		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-		cmd.Env = append(cmd.Environ(),
+		// Scrubbed as bough scrubs it, or a GIT_DIR exported by a hook would
+		// have these commands build the fixture inside that repository.
+		cmd.Env = append(withoutGitEnv(cmd.Environ()),
 			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com",
 			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com")
 		if out, err := cmd.CombinedOutput(); err != nil {

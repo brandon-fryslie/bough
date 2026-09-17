@@ -163,7 +163,10 @@ func withoutGitEnv(env []string) []string {
 func gitEnvKept(name string) bool {
 	switch name {
 	case "GIT_EXEC_PATH", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM",
-		"GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT":
+		"GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
+		// Only the environment can let discovery cross a mount, which a
+		// container that mounts part of a checkout on its own needs.
+		"GIT_DISCOVERY_ACROSS_FILESYSTEM":
 		return true
 	}
 	return strings.HasPrefix(name, "GIT_TRACE") ||
