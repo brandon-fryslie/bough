@@ -33,6 +33,7 @@ import (
 	"iter"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/nickelsec/bough/internal/agent"
@@ -100,7 +101,14 @@ type Resolver struct {
 // known is one directory that has history, with whatever every source that
 // saw it recorded about it.
 type known struct {
-	path   string
+	// path is the first spelling seen, which names the family.
+	path string
+
+	// spellings is every spelling any source recorded. A record is written in
+	// its agent's own form, which may keep what normalising folds away, so a
+	// record is asked about each of them and not only the one that came first.
+	spellings []string
+
 	serves []func(string) bool
 }
 
@@ -131,6 +139,9 @@ func index(projects []agent.Project) map[string]*known {
 		if !ok {
 			k = &known{path: p.Path}
 			byKey[key] = k
+		}
+		if !slices.Contains(k.spellings, p.Path) {
+			k.spellings = append(k.spellings, p.Path)
 		}
 		if p.Serves != nil {
 			k.serves = append(k.serves, p.Serves)
@@ -212,7 +223,7 @@ func (r *Resolver) recorded(k *known, followed map[string]bool) (Family, bool) {
 	matched := map[string]*known{}
 	for _, serves := range k.serves {
 		for candidate, other := range r.known {
-			if candidate != key && serves(other.path) {
+			if candidate != key && slices.ContainsFunc(other.spellings, serves) {
 				matched[candidate] = other
 			}
 		}

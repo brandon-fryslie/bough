@@ -37,14 +37,22 @@ func (d *Disk) Exists(dir string) bool {
 // /tmp/x.
 func (d *Disk) MainTree(dir string) string {
 	d.mu.Lock()
-	defer d.mu.Unlock()
-	if tree, ok := d.trees[dir]; ok {
+	tree, ok := d.trees[dir]
+	d.mu.Unlock()
+	if ok {
 		return tree
 	}
+
+	// Git runs unlocked, so callers sharing a Disk wait on one another only
+	// for the map. Two asking about one directory at once both run git and
+	// get the same answer.
+	tree = spelledAs(dir, mainTree(dir))
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	if d.trees == nil {
 		d.trees = map[string]string{}
 	}
-	tree := spelledAs(dir, mainTree(dir))
 	d.trees[dir] = tree
 	return tree
 }
@@ -57,6 +65,11 @@ func (d *Disk) MainTree(dir string) string {
 // bare repository first, marked bare, and names a submodule by its git
 // directory under .git/modules, which is nobody's project: the submodule's
 // checkout is the top level its git directory is configured with.
+//
+// One layout has no answer. A repository whose git directory was moved out
+// with --separate-git-dir lists that directory as its main tree, and nothing
+// in it records where the checkout is, so a linked worktree of it names no
+// tree and stands alone.
 func mainTree(dir string) string {
 	out, err := run(dir, "rev-parse", "--show-toplevel", "--git-dir", "--git-common-dir")
 	if err != nil {

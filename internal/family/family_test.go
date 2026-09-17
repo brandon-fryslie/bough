@@ -292,6 +292,22 @@ func TestResolveWithoutRepository(t *testing.T) {
 	}
 }
 
+// One directory recorded under two spellings is asked about in both, so which
+// source came first cannot decide whether a record finds it.
+func TestResolveAsksARecordAboutEverySpelling(t *testing.T) {
+	scratchpad := project("/private/tmp/claude-501/D--work-site/1d56911b-b2f0-46e1-96a3-e1622bc1875c/scratchpad",
+		scratchpadFor("D--work-site"))
+	for _, order := range [][]agent.Project{
+		{project("/d/work/site", nil), project(`D:\work\site`, nil), scratchpad},
+		{project(`D:\work\site`, nil), project("/d/work/site", nil), scratchpad},
+	} {
+		r := WithoutRepository(order)
+		if got := r.Resolve(scratchpad.Path); got.Evidence != Recorded {
+			t.Errorf("with %q first, the scratchpad resolved to %+v, want its project", order[0].Path, got)
+		}
+	}
+}
+
 // Two directories recorded as made for each other must not chase one another.
 func TestResolveStopsFollowingACycle(t *testing.T) {
 	r := WithoutRepository([]agent.Project{
