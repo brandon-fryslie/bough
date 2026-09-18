@@ -30,3 +30,6 @@
 # forever. docs/img/screenshot.png is the still that does get committed.
 *.webm
 *.mp4
+
+# harness-managed agent worktrees, which live in the repo but are never part of it
+/.claude/
