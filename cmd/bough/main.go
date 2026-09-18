@@ -90,15 +90,16 @@ func run(args []string, stdout, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 
 	var (
-		asJSON    = fs.Bool("json", false, "write the graph as JSON instead of text")
-		asText    = fs.Bool("text", false, "write to the terminal instead of opening a browser")
-		list      = fs.Bool("list", false, "list the projects with history and stop")
-		verbose   = fs.Bool("v", false, "include every prompt in the text output, and every directory in --list")
-		root      = fs.String("root", "", "read every agent's history from here instead of its usual location")
-		out       = fs.String("o", "", "write to this file instead of standard output")
-		showVer   = fs.Bool("version", false, "print the version and stop")
-		noRepo    = fs.Bool("no-repo", false, "do not read the project's git history")
-		agentFlag = fs.String("agent", "all", "which agent history to read: "+strings.Join(registry.Flags(), ", "))
+		asJSON      = fs.Bool("json", false, "write the graph as JSON instead of text")
+		asText      = fs.Bool("text", false, "write to the terminal instead of opening a browser")
+		list        = fs.Bool("list", false, "list the projects with history and stop")
+		asPortfolio = fs.Bool("portfolio", false, "write every project's sittings as JSON and stop")
+		verbose     = fs.Bool("v", false, "include every prompt in the text output, and every directory in --list")
+		root        = fs.String("root", "", "read every agent's history from here instead of its usual location")
+		out         = fs.String("o", "", "write to this file instead of standard output")
+		showVer     = fs.Bool("version", false, "print the version and stop")
+		noRepo      = fs.Bool("no-repo", false, "do not read the project's git history")
+		agentFlag   = fs.String("agent", "all", "which agent history to read: "+strings.Join(registry.Flags(), ", "))
 	)
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, usage, strings.Join(registry.Flags(), ", "))
@@ -157,8 +158,15 @@ func run(args []string, stdout, stderr io.Writer) error {
 	families := resolver(projects, made, disk, *noRepo)
 	whole := families.Projects()
 
+	b := builder{sources: sources, made: made, disk: disk, families: families, noRepo: *noRepo, stderr: stderr}
+
 	if *list {
 		return writeList(stdout, sources, whole, *verbose)
+	}
+	if *asPortfolio {
+		return write(*out, stdout, func(w io.Writer) error {
+			return writeJSON(w, b.portfolio(whole, time.Now))
+		})
 	}
 
 	target, err := choose(whole, families, name, os.Stdin, stderr)
@@ -171,32 +179,47 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	b := builder{sources: sources, made: made, disk: disk, families: families, noRepo: *noRepo, stderr: stderr}
 	g, err := b.build(target)
 	if err != nil {
 		return err
 	}
 
-	w := stdout
-	if *out != "" {
-		f, err := os.Create(*out)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-		w = f
-	}
-
 	if *asJSON {
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		return enc.Encode(g)
+		return write(*out, stdout, func(w io.Writer) error { return writeJSON(w, g) })
 	}
-
 	if useBrowser(*asText, *out, stdout) {
 		return browse(target.Key(), g, b.every(whole), stderr)
 	}
-	return graph.WriteText(w, g, *verbose, registry.Display)
+	return write(*out, stdout, func(w io.Writer) error {
+		return graph.WriteText(w, g, *verbose, registry.Display)
+	})
+}
+
+// write runs body against where output goes: the file -o named, or the screen.
+//
+// [LAW:single-enforcer] One place answers -o, so every document bough writes
+// answers it the same way. The close is reported rather than deferred away: a
+// write that failed to flush leaves a file quietly missing its tail, and the
+// exit code is the only place that can say so.
+func write(path string, stdout io.Writer, body func(io.Writer) error) error {
+	if path == "" {
+		return body(stdout)
+	}
+	// The path is what the reader asked -o for, and writing there is the
+	// whole point of the flag. Nothing here comes from a transcript.
+	f, err := os.Create(path) //#nosec G304
+	if err != nil {
+		return err
+	}
+	return errors.Join(body(f), f.Close())
+}
+
+// writeJSON writes a document the way bough writes every one: indented, since
+// a file somebody opens is read by a person at least as often as by a program.
+func writeJSON(w io.Writer, document any) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(document)
 }
 
 // builder is what building a project's graph needs from this edge.
@@ -557,16 +580,10 @@ func describe(p family.Project) string {
 	}
 	parts := []string{strings.Join(shares, " and ")}
 
-	var last time.Time
-	for _, m := range p.Members {
-		if m.LastWorked.After(last) {
-			last = m.LastWorked
-		}
-	}
 	if n := len(p.Directories()); n > 1 {
 		parts = append(parts, fmt.Sprintf("%d directories", n))
 	}
-	if !last.IsZero() {
+	if last := p.LastWorked(); !last.IsZero() {
 		parts = append(parts, ago(last))
 	}
 	return strings.Join(parts, ", ")
@@ -818,6 +835,7 @@ const usage = `bough shows the shape of the work in a project's AI coding histor
   bough --json       write the graph as JSON
   bough --version    print the version
   bough --no-repo    leave the project's git history unread
+  bough --portfolio  write every project's sittings as JSON
   bough --agent=NAME  read one agent's history: %s
 
 Anything piped or redirected is written as text, so bough > notes.txt and
