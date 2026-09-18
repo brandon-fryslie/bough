@@ -210,7 +210,16 @@ func run(args []string, stdout, stderr io.Writer) error {
 // that can say so.
 func write(path string, stdout io.Writer, body func(io.Writer) error) error {
 	if path == "" {
-		return body(stdout)
+		// The screen is latched as a file is. A shell redirect is a way of
+		// writing a file that usage itself offers, and a full disk reaches it
+		// by exactly the same road. Piping into something that stops reading
+		// never arrives here: the program is killed by the signal rather than
+		// told about it.
+		out := &faithful{to: stdout}
+		if err := body(out); err != nil {
+			return err
+		}
+		return out.err
 	}
 	// The path is what the reader asked -o for, and writing there is the
 	// whole point of the flag. Nothing here comes from a transcript.

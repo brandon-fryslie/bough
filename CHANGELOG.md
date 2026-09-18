@@ -27,13 +27,16 @@ Notable changes, newest first. Format follows
 - `--list` writes to the file `-o` names. It used to accept the flag, print
   the listing to the screen and exit 0, so a script redirecting a listing got
   an empty file and no indication anything was wrong.
-- A document written to `-o` reports a write that failed. A full disk is
+- Any document bough writes reports a write that failed, to the file `-o`
+  names or to the screen a shell redirect points at a file. A full disk is
   reported by the write and by nothing else — closing the file succeeds over
   it — so bough could exit 0 having left half a document behind.
-- `-o` is opened after the history is read, not before. Naming an existing
-  file truncates it, and both `--list` and `--portfolio` read every transcript
-  on the machine, so an interrupted run used to destroy a good file and take
-  the best part of a minute failing to replace it.
+- `-o` is opened after the history is read, not before. Both `--list` and
+  `--portfolio` read every transcript on the machine first, so naming an
+  existing file no longer empties it and then spends the best part of a minute
+  working out what to put there. The document is still written in place once
+  it is ready, so an interrupted write still leaves a partial file — reported
+  now, rather than passed off as a whole one.
 - Edits in a Claude Code worktree count as work. A worktree sits under the
   project's `.claude` directory, so its files were all taken for the agent's
   own bookkeeping and left out of top files, churn, struggle and links.

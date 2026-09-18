@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -106,6 +107,24 @@ func TestAWriteThatFailedIsReportedEvenWhenTheBodyIgnoresIt(t *testing.T) {
 	}
 	if full.writes != 1 {
 		t.Errorf("kept writing to a destination that had already failed: %d writes", full.writes)
+	}
+}
+
+// A shell redirect is how usage itself offers to make a file, so the screen
+// has to answer for a failed write exactly as -o does. Only json happened to,
+// and only because its encoder passes the error back.
+func TestAFailedWriteToTheScreenIsReportedToo(t *testing.T) {
+	full := &failing{err: errors.New("no space left on device")}
+
+	// A body of the shape writeTo and graph.WriteText both have: it prints,
+	// and it answers nil whatever printing did.
+	err := write("", full, func(w io.Writer) error {
+		fmt.Fprintf(w, "a document that will not fit\n")
+		return nil
+	})
+
+	if err == nil {
+		t.Fatal("bough would exit 0 over a document that never reached the disk")
 	}
 }
 
