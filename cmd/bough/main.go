@@ -164,9 +164,12 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return writeList(stdout, sources, whole, *verbose)
 	}
 	if *asPortfolio {
-		return write(*out, stdout, func(w io.Writer) error {
-			return writeJSON(w, b.portfolio(whole, time.Now))
-		})
+		// Summarised before -o is opened, not inside it. Reading a whole
+		// machine takes the best part of a minute, and opening the file first
+		// would truncate a good portfolio and then spend that minute failing
+		// to replace it.
+		doc := b.portfolio(whole, time.Now)
+		return write(*out, stdout, func(w io.Writer) error { return writeJSON(w, doc) })
 	}
 
 	target, err := choose(whole, families, name, os.Stdin, stderr)
@@ -242,15 +245,37 @@ type builder struct {
 // Some transcripts may be unreadable while others are fine, so a partial read
 // says so and carries on with what did load. Nothing loading at all is no
 // graph, since an empty drawing would read as a project with no work in it.
+//
+// That last case is two facts, and the error says which. A history that would
+// not read and a history that read and held nothing both leave nothing to
+// draw, so a caller that refuses either way need not look; one that reports
+// them to a reader has to tell them apart, and errNoHistory is how.
 func (b builder) build(p family.Project) (graph.Graph, error) {
 	sessions, err := read(b.sources, p)
 	if len(sessions) == 0 {
-		return graph.Graph{}, errors.Join(fmt.Errorf("no readable history for %s", p.Name()), err)
+		return graph.Graph{}, errors.Join(nothingRead(p, err), err)
 	}
 	if err != nil {
 		fmt.Fprintf(b.stderr, "bough: some history of %s could not be read: %v\n", p.Name(), err)
 	}
 	return graph.Build(p, sessions, options(b.made, b.disk, b.families, p, sessions, b.noRepo)), nil
+}
+
+// errNoHistory marks a project whose history read cleanly and held nothing.
+//
+// It is a value rather than only a form of words because something downstream
+// has to branch on it: the portfolio reports such a family as one with no
+// work rather than one that failed, and reading that out of a message would
+// tie the document's meaning to the wording of a sentence.
+var errNoHistory = errors.New("no history to read")
+
+// nothingRead says why a project produced no sessions at all: its history
+// would not read, or it read and held none.
+func nothingRead(p family.Project, err error) error {
+	if err != nil {
+		return fmt.Errorf("no readable history for %s", p.Name())
+	}
+	return fmt.Errorf("%s has %w", p.Name(), errNoHistory)
 }
 
 // every is a build for each project, by the key the server addresses it by.

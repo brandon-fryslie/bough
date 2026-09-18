@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"io"
 	"sync"
 	"time"
@@ -52,13 +53,22 @@ func (b builder) portfolio(projects []family.Project, now func() time.Time) port
 
 // summarise is one family's entry: what the resolver already knew about it,
 // and then what came of reading its history.
+//
+// Three outcomes, and the document has to keep them apart. A family nobody
+// has worked in is not a broken one, and saying so of it would send a reader
+// looking for a fault that is not there.
 func (b builder) summarise(p family.Project) portfolio.Family {
 	known := portfolio.Known(p)
-	g, err := b.build(p)
-	if err != nil {
+	switch g, err := b.build(p); {
+	// Read cleanly and held nothing. Known is already that family: no
+	// sittings, and no reason given, because there is nothing wrong.
+	case errors.Is(err, errNoHistory):
+		return known
+	case err != nil:
 		return known.Unread(err)
+	default:
+		return known.Read(g)
 	}
-	return known.Read(g)
 }
 
 // serialised is one writer several goroutines share.

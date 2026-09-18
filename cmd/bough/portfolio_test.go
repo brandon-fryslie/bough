@@ -143,6 +143,39 @@ func TestPortfolioSaysWhenAProjectCannotBeRead(t *testing.T) {
 	}
 }
 
+// A project nobody has worked in is not a broken one. Both come back with no
+// sittings, and calling the quiet one unreadable sends a reader looking for a
+// fault that is not there — the same conflation the reason exists to prevent,
+// pointing the other way.
+func TestPortfolioTellsAQuietProjectFromABrokenOne(t *testing.T) {
+	b := builder{
+		sources: map[string]agent.Source{
+			"claude-code": quiet{},
+			"codex":       unreadable{},
+		},
+		disk:     &repo.Disk{},
+		families: family.WithoutRepository(nil, nil),
+		noRepo:   true,
+		stderr:   io.Discard,
+	}
+
+	doc := b.portfolio([]family.Project{
+		project("quiet", "/work/quiet", "claude-code"),
+		project("broken", "/work/broken", "codex"),
+	}, portfolioNow)
+
+	silent, broken := doc.Families[0], doc.Families[1]
+	if len(silent.Sittings) != 0 {
+		t.Errorf("a project with no work summarised %d sittings", len(silent.Sittings))
+	}
+	if silent.Unreadable != "" {
+		t.Errorf("a project that read cleanly is reported as unreadable: %q", silent.Unreadable)
+	}
+	if broken.Unreadable == "" {
+		t.Errorf("a project that could not be read reports nothing: %+v", broken)
+	}
+}
+
 // Every project is summarised, however many there are and however few slots
 // they are read through. Run under -race this is also the check that reading
 // them at once is safe.
@@ -201,6 +234,13 @@ func (readable) Sessions(projects ...agent.Project) ([]agent.Session, error) {
 	}
 	return sessions, nil
 }
+
+// quiet is a source that reads cleanly and finds no sessions, which is a
+// directory of transcripts holding nothing anybody typed.
+type quiet struct{}
+
+func (quiet) Detect() ([]agent.Project, error)                   { return nil, nil }
+func (quiet) Sessions(...agent.Project) ([]agent.Session, error) { return nil, nil }
 
 // unreadable is a source whose history cannot be opened at all, which is a
 // permission, a corrupt file, or a transcript with a line past the ceiling.
