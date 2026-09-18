@@ -30,3 +30,9 @@
 # forever. docs/img/screenshot.png is the still that does get committed.
 *.webm
 *.mp4
+
+# harness-managed agent worktrees, which live in the repo but are never part
+# of it. Only the worktrees: anything else under .claude is a project's own
+# configuration, and ignoring the directory whole would make `git add` of it
+# quietly do nothing.
+/.claude/worktrees/

@@ -36,6 +36,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/nickelsec/bough/internal/agent"
 )
@@ -346,6 +347,21 @@ func (p Project) Directories() []string {
 		}
 	}
 	return dirs
+}
+
+// LastWorked is when any of the family's history was last added to: the
+// latest of its members'. It is zero when no member recorded one.
+//
+// The whole family's, since a checkout worked on last week through a worktree
+// worked on this morning was worked on this morning.
+func (p Project) LastWorked() time.Time {
+	var last time.Time
+	for _, m := range p.Members {
+		if m.LastWorked.After(last) {
+			last = m.LastWorked
+		}
+	}
+	return last
 }
 
 // Holds reports whether a directory is this project's own: the directory the

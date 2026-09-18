@@ -90,15 +90,16 @@ func run(args []string, stdout, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 
 	var (
-		asJSON    = fs.Bool("json", false, "write the graph as JSON instead of text")
-		asText    = fs.Bool("text", false, "write to the terminal instead of opening a browser")
-		list      = fs.Bool("list", false, "list the projects with history and stop")
-		verbose   = fs.Bool("v", false, "include every prompt in the text output, and every directory in --list")
-		root      = fs.String("root", "", "read every agent's history from here instead of its usual location")
-		out       = fs.String("o", "", "write to this file instead of standard output")
-		showVer   = fs.Bool("version", false, "print the version and stop")
-		noRepo    = fs.Bool("no-repo", false, "do not read the project's git history")
-		agentFlag = fs.String("agent", "all", "which agent history to read: "+strings.Join(registry.Flags(), ", "))
+		asJSON      = fs.Bool("json", false, "write the graph as JSON instead of text")
+		asText      = fs.Bool("text", false, "write to the terminal instead of opening a browser")
+		list        = fs.Bool("list", false, "list the projects with history and stop")
+		asPortfolio = fs.Bool("portfolio", false, "write every project's sittings as JSON and stop")
+		verbose     = fs.Bool("v", false, "include every prompt in the text output, and every directory in --list")
+		root        = fs.String("root", "", "read every agent's history from here instead of its usual location")
+		out         = fs.String("o", "", "write to this file instead of standard output")
+		showVer     = fs.Bool("version", false, "print the version and stop")
+		noRepo      = fs.Bool("no-repo", false, "do not read the project's git history")
+		agentFlag   = fs.String("agent", "all", "which agent history to read: "+strings.Join(registry.Flags(), ", "))
 	)
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, usage, strings.Join(registry.Flags(), ", "))
@@ -157,8 +158,16 @@ func run(args []string, stdout, stderr io.Writer) error {
 	families := resolver(projects, made, disk, *noRepo)
 	whole := families.Projects()
 
+	b := builder{sources: sources, made: made, disk: disk, families: families, noRepo: *noRepo, stderr: stderr}
+
 	if *list {
-		return writeList(stdout, sources, whole, *verbose)
+		// Read before -o is opened, for the reason write gives.
+		return write(*out, stdout, listed(sources, whole, *verbose).writeTo)
+	}
+	if *asPortfolio {
+		// Summarised before -o is opened, for the reason write gives.
+		doc := b.portfolio(whole, time.Now)
+		return write(*out, stdout, func(w io.Writer) error { return writeJSON(w, doc) })
 	}
 
 	target, err := choose(whole, families, name, os.Stdin, stderr)
@@ -171,32 +180,88 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	b := builder{sources: sources, made: made, disk: disk, families: families, noRepo: *noRepo, stderr: stderr}
 	g, err := b.build(target)
 	if err != nil {
 		return err
 	}
 
-	w := stdout
-	if *out != "" {
-		f, err := os.Create(*out)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-		w = f
-	}
-
 	if *asJSON {
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		return enc.Encode(g)
+		return write(*out, stdout, func(w io.Writer) error { return writeJSON(w, g) })
 	}
-
 	if useBrowser(*asText, *out, stdout) {
 		return browse(target.Key(), g, b.every(whole), stderr)
 	}
-	return graph.WriteText(w, g, *verbose, registry.Display)
+	return write(*out, stdout, func(w io.Writer) error {
+		return graph.WriteText(w, g, *verbose, registry.Display)
+	})
+}
+
+// write runs body against where output goes: the file -o named, or the screen.
+//
+// body only formats. Everything slow — reading a machine's history — happens
+// before the call, because naming a file truncates it: open it first and a
+// run that fails, or is interrupted, has destroyed the last good copy to put
+// nothing in its place.
+//
+// [LAW:single-enforcer] One place answers -o, so every document bough writes
+// answers it the same way. The close is reported rather than deferred away,
+// and a body that ignores what Write told it is answered for: a file quietly
+// missing its tail is still a failure, and the exit code is the only place
+// that can say so.
+func write(path string, stdout io.Writer, body func(io.Writer) error) error {
+	if path == "" {
+		// The screen is latched as a file is. A shell redirect is a way of
+		// writing a file that usage itself offers, and a full disk reaches it
+		// by exactly the same road. Piping into something that stops reading
+		// never arrives here: the program is killed by the signal rather than
+		// told about it.
+		out := &faithful{to: stdout}
+		if err := body(out); err != nil {
+			return err
+		}
+		return out.err
+	}
+	// The path is what the reader asked -o for, and writing there is the
+	// whole point of the flag. Nothing here comes from a transcript.
+	f, err := os.Create(path) //#nosec G304
+	if err != nil {
+		return err
+	}
+	out := &faithful{to: f}
+	// What the body says of its own failure wins, since it knows what it was
+	// doing. The latch only answers when the body claimed all was well.
+	if err := body(out); err != nil {
+		return errors.Join(err, f.Close())
+	}
+	return errors.Join(out.err, f.Close())
+}
+
+// faithful is a writer that remembers the first failure.
+//
+// [LAW:no-silent-failure] Not every body checks what Write returns, and a
+// full disk is reported by Write and by nothing else: Close on a regular file
+// succeeds over it. Holding the failure here means a body that discards it
+// cannot report a whole document over a truncated one.
+type faithful struct {
+	to  io.Writer
+	err error
+}
+
+func (f *faithful) Write(p []byte) (int, error) {
+	if f.err != nil {
+		return 0, f.err
+	}
+	n, err := f.to.Write(p)
+	f.err = err
+	return n, err
+}
+
+// writeJSON writes a document the way bough writes every one: indented, since
+// a file somebody opens is read by a person at least as often as by a program.
+func writeJSON(w io.Writer, document any) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(document)
 }
 
 // builder is what building a project's graph needs from this edge.
@@ -219,15 +284,37 @@ type builder struct {
 // Some transcripts may be unreadable while others are fine, so a partial read
 // says so and carries on with what did load. Nothing loading at all is no
 // graph, since an empty drawing would read as a project with no work in it.
+//
+// That last case is two facts, and the error says which. A history that would
+// not read and a history that read and held nothing both leave nothing to
+// draw, so a caller that refuses either way need not look; one that reports
+// them to a reader has to tell them apart, and errNoHistory is how.
 func (b builder) build(p family.Project) (graph.Graph, error) {
 	sessions, err := read(b.sources, p)
 	if len(sessions) == 0 {
-		return graph.Graph{}, errors.Join(fmt.Errorf("no readable history for %s", p.Name()), err)
+		return graph.Graph{}, errors.Join(nothingRead(p, err), err)
 	}
 	if err != nil {
 		fmt.Fprintf(b.stderr, "bough: some history of %s could not be read: %v\n", p.Name(), err)
 	}
 	return graph.Build(p, sessions, options(b.made, b.disk, b.families, p, sessions, b.noRepo)), nil
+}
+
+// errNoHistory marks a project whose history read cleanly and held nothing.
+//
+// It is a value rather than only a form of words because something downstream
+// has to branch on it: the portfolio reports such a family as one with no
+// work rather than one that failed, and reading that out of a message would
+// tie the document's meaning to the wording of a sentence.
+var errNoHistory = errors.New("no history to read")
+
+// nothingRead says why a project produced no sessions at all: its history
+// would not read, or it read and held none.
+func nothingRead(p family.Project, err error) error {
+	if err != nil {
+		return fmt.Errorf("no readable history for %s", p.Name())
+	}
+	return fmt.Errorf("%s has %w", p.Name(), errNoHistory)
 }
 
 // every is a build for each project, by the key the server addresses it by.
@@ -557,16 +644,10 @@ func describe(p family.Project) string {
 	}
 	parts := []string{strings.Join(shares, " and ")}
 
-	var last time.Time
-	for _, m := range p.Members {
-		if m.LastWorked.After(last) {
-			last = m.LastWorked
-		}
-	}
 	if n := len(p.Directories()); n > 1 {
 		parts = append(parts, fmt.Sprintf("%d directories", n))
 	}
-	if !last.IsZero() {
+	if last := p.LastWorked(); !last.IsZero() {
 		parts = append(parts, ago(last))
 	}
 	return strings.Join(parts, ", ")
@@ -656,9 +737,34 @@ func place(arg string) (string, bool) {
 // driveRooted matches a path that starts at a Windows drive.
 var driveRooted = regexp.MustCompile(`^[A-Za-z]:(/|$)`)
 
-// writeList prints one line per project, in columns wide enough for what is
-// actually in them, and under each the directories it was read from when
-// every directory is asked for.
+// listing is every project measured, ready to print: the rows and the widths
+// the columns came out at.
+//
+// It is a value rather than a print because reading it is the slow part —
+// counted opens every transcript a project holds — and -o truncates the file
+// it names. Reading first means the listing exists before anything is
+// destroyed to make room for it ([LAW:effects-at-boundaries]).
+type listing struct {
+	rows  []row
+	nameW int
+	pathW int
+}
+
+// row is one project's line, and under it the directories it was read from.
+type row struct {
+	name  string
+	path  string
+	count count
+	dirs  []dirCount
+}
+
+// dirCount is one of a project's directories with how much history it holds.
+type dirCount struct {
+	path  string
+	count count
+}
+
+// listed reads every project and measures the columns its rows need.
 //
 // The widths used to be fixed at 24 and 40, which held while every project was
 // a short name in a short path. A Codex project is named after a directory that
@@ -671,18 +777,7 @@ var driveRooted = regexp.MustCompile(`^[A-Za-z]:(/|$)`)
 // default, which stopped being true when the second one arrived; and a
 // project both agents worked on is one project, so one row says how much of
 // it each did.
-func writeList(w io.Writer, sources map[string]agent.Source, projects []family.Project, everyDir bool) error {
-	type dir struct {
-		path  string
-		count count
-	}
-	type row struct {
-		name  string
-		path  string
-		count count
-		dirs  []dir
-	}
-
+func listed(sources map[string]agent.Source, projects []family.Project, everyDir bool) listing {
 	rows := make([]row, 0, len(projects))
 	var nameW, pathW int
 	for _, p := range projects {
@@ -700,7 +795,7 @@ func writeList(w io.Writer, sources map[string]agent.Source, projects []family.P
 			at := family.Project{Path: d, Members: slices.DeleteFunc(slices.Clone(p.Members), func(m agent.Project) bool {
 				return agent.NormalisePath(m.Path) != agent.NormalisePath(d)
 			})}
-			r.dirs = append(r.dirs, dir{path: d, count: counted(sources, at)})
+			r.dirs = append(r.dirs, dirCount{path: d, count: counted(sources, at)})
 		}
 
 		rows = append(rows, r)
@@ -716,13 +811,18 @@ func writeList(w io.Writer, sources map[string]agent.Source, projects []family.P
 	if pathW > pathLimit {
 		pathW = pathLimit
 	}
+	return listing{rows: rows, nameW: nameW, pathW: pathW}
+}
 
-	for _, r := range rows {
-		fmt.Fprintf(w, "%-*s  %-*s  %s\n", nameW, r.name, pathW, r.path, r.count.say())
+// writeTo prints the listing, one line per project. Nothing is read here; the
+// reading was done to build it.
+func (l listing) writeTo(w io.Writer) error {
+	for _, r := range l.rows {
+		fmt.Fprintf(w, "%-*s  %-*s  %s\n", l.nameW, r.name, l.pathW, r.path, r.count.say())
 
 		// Under the project's own path, so the directories read as parts of it.
 		for _, d := range r.dirs {
-			fmt.Fprintf(w, "%-*s  %-*s  %s\n", nameW, "", pathW, d.path, d.count.say())
+			fmt.Fprintf(w, "%-*s  %-*s  %s\n", l.nameW, "", l.pathW, d.path, d.count.say())
 		}
 	}
 	return nil
@@ -818,6 +918,7 @@ const usage = `bough shows the shape of the work in a project's AI coding histor
   bough --json       write the graph as JSON
   bough --version    print the version
   bough --no-repo    leave the project's git history unread
+  bough --portfolio  write every project's sittings as JSON
   bough --agent=NAME  read one agent's history: %s
 
 Anything piped or redirected is written as text, so bough > notes.txt and

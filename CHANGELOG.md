@@ -5,8 +5,38 @@ Notable changes, newest first. Format follows
 
 ## Unreleased
 
+### Added
+
+- `--portfolio` writes every project at once, as JSON, and stops. One family
+  per entry with its directories, its agents, when it was last worked and a
+  line for each sitting: the agent, the id the project's own page gives that
+  sitting, when it ran, how long it was active for, and its prompts, edits,
+  commits and struggle. A view of everything somebody has worked on cannot be
+  a hundred graphs — those carry every prompt in full, and reading a whole
+  machine one project at a time takes over a minute — so this is the small
+  document such a view reads instead. Families are read several at a time.
+
+  **The portfolio schema is 1.** It is this document's own and moves
+  independently of the graph's, since the two describe different things.
+
+  A project whose history could not be read says so, rather than arriving
+  looking like a project nobody has ever worked in.
+
 ### Fixed
 
+- `--list` writes to the file `-o` names. It used to accept the flag, print
+  the listing to the screen and exit 0, so a script redirecting a listing got
+  an empty file and no indication anything was wrong.
+- Any document bough writes reports a write that failed, to the file `-o`
+  names or to the screen a shell redirect points at a file. A full disk is
+  reported by the write and by nothing else — closing the file succeeds over
+  it — so bough could exit 0 having left half a document behind.
+- `-o` is opened after the history is read, not before. Both `--list` and
+  `--portfolio` read every transcript on the machine first, so naming an
+  existing file no longer empties it and then spends the best part of a minute
+  working out what to put there. The document is still written in place once
+  it is ready, so an interrupted write still leaves a partial file — reported
+  now, rather than passed off as a whole one.
 - Edits in a Claude Code worktree count as work. A worktree sits under the
   project's `.claude` directory, so its files were all taken for the agent's
   own bookkeeping and left out of top files, churn, struggle and links.
