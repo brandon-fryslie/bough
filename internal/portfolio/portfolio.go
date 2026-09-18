@@ -7,10 +7,16 @@
 // smaller document such a view reads instead: a line for each family, and for
 // each of its sittings the handful of numbers a timeline needs.
 //
-// No prompt text, and, as in graph, nothing about how any of it might be
-// drawn. A sitting here is a reference rather than a copy: it carries the id
-// the family's own graph gave it, so a reader that wants the work itself asks
-// for that family and finds the sitting under the same name.
+// No prompt bodies, and, as in graph, nothing about how any of it might be
+// drawn. A sitting's label is the exception worth naming: it is text somebody
+// already wrote, so the opening of a prompt reaches this document by design.
+// It is carried exactly as the family's graph spells it rather than shortened
+// again here, since one sitting labelled two ways in two documents is worse
+// than a long label.
+//
+// A sitting is otherwise a reference rather than a copy: it carries the id the
+// family's own graph gave it, so a reader that wants the work itself asks for
+// that family and finds the sitting under the same name.
 //
 // A family arrives in two parts, because a view of everything has to draw
 // before it has read everything. Known answers from what detection and the
@@ -19,6 +25,8 @@
 package portfolio
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/nickelsec/bough/internal/family"
@@ -86,6 +94,12 @@ type Family struct {
 
 	// Sittings are the family's, in the order its graph holds them, which is
 	// the order the work happened.
+	//
+	// Every one that could be read. Where some of a family's history failed
+	// and the rest loaded, the sittings are what loaded, and this document
+	// does not yet say so: the terminal reports it and nothing carries it
+	// here. Until it does, a reader cannot take the absence of a sitting as
+	// proof the work never happened.
 	Sittings []Sitting `json:"sittings"`
 }
 
@@ -115,8 +129,13 @@ type Sitting struct {
 
 	Edits int `json:"edits"`
 
-	// Commits is how many were made, not which. The hashes and their subjects
-	// are the family's graph to give.
+	// Commits is how many the sitting made in this family, not which: the
+	// hashes and their subjects are the family's graph to give.
+	//
+	// In this family, because that is what the graph counts here. A sitting
+	// that committed in another family has those commits recorded against
+	// that family in the graph's own elsewhere, and neither project owns the
+	// other, so neither row claims the other's work.
 	Commits int `json:"commits"`
 
 	// Struggle rates how hard the work looked, from 0 to 1, and carries the
@@ -189,7 +208,26 @@ func (f Family) Read(g graph.Graph) Family {
 // Unread is what f becomes when none of its history could be read. err is the
 // reason, and it is the only account of it a reader of this document gets, so
 // it has to say something a person can act on.
+//
+// The opening of it. A failed read names every transcript it could not open,
+// and a family with hundreds of corrupt ones would put hundreds of lines into
+// the document whose whole premise is being the small one. What is left out is
+// counted rather than dropped quietly, and running bough at that project
+// prints the whole of it.
 func (f Family) Unread(err error) Family {
-	f.Unreadable = err.Error()
+	f.Unreadable = opening(err.Error(), reasonLines)
 	return f
+}
+
+// reasonLines is how much of a failure the document carries: enough to name
+// the family and the first causes.
+const reasonLines = 5
+
+// opening is s cut to at most n lines, saying how many it left.
+func opening(s string, n int) string {
+	lines := strings.Split(s, "\n")
+	if len(lines) <= n {
+		return s
+	}
+	return strings.Join(lines[:n], "\n") + fmt.Sprintf("\n... and %d more", len(lines)-n)
 }

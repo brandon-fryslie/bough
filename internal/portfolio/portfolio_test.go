@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -186,6 +187,42 @@ func TestEveryFamilyCarriesAListOfSittings(t *testing.T) {
 	}
 	if bytes.Contains(body, []byte(`"families":null`)) {
 		t.Errorf("families serialised as null: %s", body)
+	}
+}
+
+// A failed read names every transcript it could not open, so the reason can
+// run to hundreds of lines. The document whose premise is being the small one
+// carries the opening of it and says how much it left, rather than either
+// swallowing the whole failure or the whole file.
+func TestAnUnreadableReasonIsBoundedAndSaysWhatItLeft(t *testing.T) {
+	p, _ := worked("example", "/work/example")
+
+	causes := make([]string, 200)
+	for i := range causes {
+		causes[i] = "reading s" + strconv.Itoa(i) + ".jsonl: token too long"
+	}
+	f := Known(p).Unread(errors.New("no readable history for example\n" + strings.Join(causes, "\n")))
+
+	if lines := strings.Count(f.Unreadable, "\n") + 1; lines > reasonLines+1 {
+		t.Errorf("the reason runs to %d lines:\n%s", lines, f.Unreadable)
+	}
+	// The first line still names the family, and the first causes survive, or
+	// the reader is told a thing failed and nothing about why.
+	if !strings.Contains(f.Unreadable, "no readable history for example") {
+		t.Errorf("the reason no longer names the family: %q", f.Unreadable)
+	}
+	if !strings.Contains(f.Unreadable, "reading s0.jsonl: token too long") {
+		t.Errorf("the reason kept no cause at all: %q", f.Unreadable)
+	}
+	// And what went is counted, not dropped quietly.
+	if !strings.Contains(f.Unreadable, "and 196 more") {
+		t.Errorf("the reason does not say how much it left out: %q", f.Unreadable)
+	}
+
+	// A reason that already fits is left exactly as it came.
+	short := errors.New("no readable history for example\nreading s1.jsonl: token too long")
+	if got := Known(p).Unread(short); got.Unreadable != short.Error() {
+		t.Errorf("a short reason was rewritten:\n%q\nwant\n%q", got.Unreadable, short.Error())
 	}
 }
 

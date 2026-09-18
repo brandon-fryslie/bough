@@ -130,8 +130,9 @@ those out for itself.
 `--portfolio` is every project at once rather than one: each family with its
 directories, the agents that worked in it, when it was last worked, and a line
 for each sitting. It is the summary, not a pile of graphs, so it holds no
-prompts, and a project whose history could not be read says so rather than
-arriving looking like a project nobody has worked in.
+prompt bodies: a sitting carries the same label the project's own page gives
+it, and nothing more of what was typed. A project whose history could not be
+read says so, rather than arriving looking like a project nobody has worked in.
 
 Everything happens on your machine. Nothing is sent anywhere, no model is
 called, and everything bough opens, your history and your repository alike, it

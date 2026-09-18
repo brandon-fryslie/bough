@@ -56,6 +56,29 @@ func TestListColumnsLineUp(t *testing.T) {
 	}
 }
 
+// -o names where output goes, for the listing as for every other document
+// bough writes. It used to be accepted and ignored here: the listing went to
+// the terminal, no file appeared, and the exit code said it had worked.
+func TestListWritesToAFile(t *testing.T) {
+	root := history(t, "example")
+	dest := filepath.Join(t.TempDir(), "list.txt")
+	var out, errs bytes.Buffer
+
+	if err := run([]string{"--list", "--root", root, "-o", dest}, &out, &errs); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "example") {
+		t.Errorf("the file does not hold the listing: %q", body)
+	}
+	if out.Len() != 0 {
+		t.Errorf("nothing should go to the screen when writing to a file, got: %s", out.String())
+	}
+}
+
 // twoProjects writes a history root holding two projects whose names are very
 // different lengths, which is what makes the column question visible.
 func twoProjects(t *testing.T, names ...string) string {

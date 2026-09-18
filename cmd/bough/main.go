@@ -161,7 +161,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 	b := builder{sources: sources, made: made, disk: disk, families: families, noRepo: *noRepo, stderr: stderr}
 
 	if *list {
-		return writeList(stdout, sources, whole, *verbose)
+		return write(*out, stdout, func(w io.Writer) error {
+			return writeList(w, sources, whole, *verbose)
+		})
 	}
 	if *asPortfolio {
 		// Summarised before -o is opened, not inside it. Reading a whole
