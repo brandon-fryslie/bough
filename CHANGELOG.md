@@ -5,8 +5,35 @@ Notable changes, newest first. Format follows
 
 ## Unreleased
 
+### Added
+
+- `--portfolio` writes every project at once, as JSON, and stops. One family
+  per entry with its directories, its agents, when it was last worked and a
+  line for each sitting: the agent, the id the project's own page gives that
+  sitting, when it ran, how long it was active for, and its prompts, edits,
+  commits and struggle. A view of everything somebody has worked on cannot be
+  a hundred graphs — those carry every prompt in full, and reading a whole
+  machine one project at a time takes over a minute — so this is the small
+  document such a view reads instead. Families are read several at a time.
+
+  **The portfolio schema is 1.** It is this document's own and moves
+  independently of the graph's, since the two describe different things.
+
+  A project whose history could not be read says so, rather than arriving
+  looking like a project nobody has ever worked in.
+
 ### Fixed
 
+- `--list` writes to the file `-o` names. It used to accept the flag, print
+  the listing to the screen and exit 0, so a script redirecting a listing got
+  an empty file and no indication anything was wrong.
+- A document written to `-o` reports a write that failed. A full disk is
+  reported by the write and by nothing else — closing the file succeeds over
+  it — so bough could exit 0 having left half a document behind.
+- `-o` is opened after the history is read, not before. Naming an existing
+  file truncates it, and both `--list` and `--portfolio` read every transcript
+  on the machine, so an interrupted run used to destroy a good file and take
+  the best part of a minute failing to replace it.
 - Edits in a Claude Code worktree count as work. A worktree sits under the
   project's `.claude` directory, so its files were all taken for the agent's
   own bookkeeping and left out of top files, churn, struggle and links.

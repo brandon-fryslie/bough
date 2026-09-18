@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -77,6 +79,45 @@ func TestListWritesToAFile(t *testing.T) {
 	if out.Len() != 0 {
 		t.Errorf("nothing should go to the screen when writing to a file, got: %s", out.String())
 	}
+}
+
+// A body that throws away what Write told it must not be able to report a
+// whole document over a truncated one. The listing is written with Fprintf,
+// whose return nobody reads, so the guarantee has to live under it.
+func TestAWriteThatFailedIsReportedEvenWhenTheBodyIgnoresIt(t *testing.T) {
+	full := &failing{err: errors.New("no space left on device")}
+	out := &faithful{to: full}
+
+	// A body of exactly the shape writeTo has: it prints, and discards every
+	// error printing gave it.
+	fmt.Fprintf(out, "a line that will not fit\n")
+
+	if out.err == nil {
+		t.Fatal("a write that failed was not remembered, so the exit code would say it worked")
+	}
+	if full.writes != 1 {
+		t.Errorf("wrote %d times, want 1: once it has failed there is no point writing more", full.writes)
+	}
+
+	// And it stays failed, rather than the next line clearing it.
+	fmt.Fprintf(out, "another line\n")
+	if out.err == nil {
+		t.Error("a later write cleared the remembered failure")
+	}
+	if full.writes != 1 {
+		t.Errorf("kept writing to a destination that had already failed: %d writes", full.writes)
+	}
+}
+
+// failing is a destination that cannot be written to, like a full disk.
+type failing struct {
+	err    error
+	writes int
+}
+
+func (f *failing) Write(p []byte) (int, error) {
+	f.writes++
+	return 0, f.err
 }
 
 // twoProjects writes a history root holding two projects whose names are very

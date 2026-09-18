@@ -163,22 +163,30 @@ func TestUnreadableIsNotTheSameAsEmpty(t *testing.T) {
 	}
 }
 
-// Neither case may serialise as null. A reader of this document walks the
-// sittings of every family, and a null is a second empty it has to know about.
-func TestEveryFamilyCarriesAListOfSittings(t *testing.T) {
+// No list in this document may serialise as null. A reader walks the families,
+// each family's agents, its directories and its sittings, and a null at any of
+// them is a second spelling of empty that every reader has to know about.
+func TestEveryFamilyCarriesAListForEveryListItDeclares(t *testing.T) {
 	p, _ := worked("example", "/work/example")
 
-	for _, f := range []Family{
-		Known(p),
-		Known(p).Read(graph.Graph{}),
-		Known(p).Unread(errors.New("could not be read")),
-	} {
-		body, err := json.Marshal(New("test", generated, []Family{f}))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if bytes.Contains(body, []byte(`"sittings":null`)) {
-			t.Errorf("sittings serialised as null: %s", body)
+	// A family with no members at all is what exposes a nil list: Agents and
+	// Directories are gathered from the members, and gathering from none of
+	// them answers nil unless something says otherwise.
+	for _, from := range []family.Project{p, {Path: "/work/nobody"}} {
+		for _, f := range []Family{
+			Known(from),
+			Known(from).Read(graph.Graph{}),
+			Known(from).Unread(errors.New("could not be read")),
+		} {
+			body, err := json.Marshal(New("test", generated, []Family{f}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, list := range []string{"sittings", "agents", "directories"} {
+				if bytes.Contains(body, []byte(`"`+list+`":null`)) {
+					t.Errorf("%s serialised as null: %s", list, body)
+				}
+			}
 		}
 	}
 	body, err := json.Marshal(New("test", generated, nil))

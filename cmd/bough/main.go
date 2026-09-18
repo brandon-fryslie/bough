@@ -161,15 +161,11 @@ func run(args []string, stdout, stderr io.Writer) error {
 	b := builder{sources: sources, made: made, disk: disk, families: families, noRepo: *noRepo, stderr: stderr}
 
 	if *list {
-		return write(*out, stdout, func(w io.Writer) error {
-			return writeList(w, sources, whole, *verbose)
-		})
+		// Read before -o is opened, for the reason write gives.
+		return write(*out, stdout, listed(sources, whole, *verbose).writeTo)
 	}
 	if *asPortfolio {
-		// Summarised before -o is opened, not inside it. Reading a whole
-		// machine takes the best part of a minute, and opening the file first
-		// would truncate a good portfolio and then spend that minute failing
-		// to replace it.
+		// Summarised before -o is opened, for the reason write gives.
 		doc := b.portfolio(whole, time.Now)
 		return write(*out, stdout, func(w io.Writer) error { return writeJSON(w, doc) })
 	}
@@ -202,10 +198,16 @@ func run(args []string, stdout, stderr io.Writer) error {
 
 // write runs body against where output goes: the file -o named, or the screen.
 //
+// body only formats. Everything slow — reading a machine's history — happens
+// before the call, because naming a file truncates it: open it first and a
+// run that fails, or is interrupted, has destroyed the last good copy to put
+// nothing in its place.
+//
 // [LAW:single-enforcer] One place answers -o, so every document bough writes
-// answers it the same way. The close is reported rather than deferred away: a
-// write that failed to flush leaves a file quietly missing its tail, and the
-// exit code is the only place that can say so.
+// answers it the same way. The close is reported rather than deferred away,
+// and a body that ignores what Write told it is answered for: a file quietly
+// missing its tail is still a failure, and the exit code is the only place
+// that can say so.
 func write(path string, stdout io.Writer, body func(io.Writer) error) error {
 	if path == "" {
 		return body(stdout)
@@ -216,7 +218,33 @@ func write(path string, stdout io.Writer, body func(io.Writer) error) error {
 	if err != nil {
 		return err
 	}
-	return errors.Join(body(f), f.Close())
+	out := &faithful{to: f}
+	// What the body says of its own failure wins, since it knows what it was
+	// doing. The latch only answers when the body claimed all was well.
+	if err := body(out); err != nil {
+		return errors.Join(err, f.Close())
+	}
+	return errors.Join(out.err, f.Close())
+}
+
+// faithful is a writer that remembers the first failure.
+//
+// [LAW:no-silent-failure] Not every body checks what Write returns, and a
+// full disk is reported by Write and by nothing else: Close on a regular file
+// succeeds over it. Holding the failure here means a body that discards it
+// cannot report a whole document over a truncated one.
+type faithful struct {
+	to  io.Writer
+	err error
+}
+
+func (f *faithful) Write(p []byte) (int, error) {
+	if f.err != nil {
+		return 0, f.err
+	}
+	n, err := f.to.Write(p)
+	f.err = err
+	return n, err
 }
 
 // writeJSON writes a document the way bough writes every one: indented, since
@@ -700,9 +728,34 @@ func place(arg string) (string, bool) {
 // driveRooted matches a path that starts at a Windows drive.
 var driveRooted = regexp.MustCompile(`^[A-Za-z]:(/|$)`)
 
-// writeList prints one line per project, in columns wide enough for what is
-// actually in them, and under each the directories it was read from when
-// every directory is asked for.
+// listing is every project measured, ready to print: the rows and the widths
+// the columns came out at.
+//
+// It is a value rather than a print because reading it is the slow part —
+// counted opens every transcript a project holds — and -o truncates the file
+// it names. Reading first means the listing exists before anything is
+// destroyed to make room for it ([LAW:effects-at-boundaries]).
+type listing struct {
+	rows  []row
+	nameW int
+	pathW int
+}
+
+// row is one project's line, and under it the directories it was read from.
+type row struct {
+	name  string
+	path  string
+	count count
+	dirs  []dirCount
+}
+
+// dirCount is one of a project's directories with how much history it holds.
+type dirCount struct {
+	path  string
+	count count
+}
+
+// listed reads every project and measures the columns its rows need.
 //
 // The widths used to be fixed at 24 and 40, which held while every project was
 // a short name in a short path. A Codex project is named after a directory that
@@ -715,18 +768,7 @@ var driveRooted = regexp.MustCompile(`^[A-Za-z]:(/|$)`)
 // default, which stopped being true when the second one arrived; and a
 // project both agents worked on is one project, so one row says how much of
 // it each did.
-func writeList(w io.Writer, sources map[string]agent.Source, projects []family.Project, everyDir bool) error {
-	type dir struct {
-		path  string
-		count count
-	}
-	type row struct {
-		name  string
-		path  string
-		count count
-		dirs  []dir
-	}
-
+func listed(sources map[string]agent.Source, projects []family.Project, everyDir bool) listing {
 	rows := make([]row, 0, len(projects))
 	var nameW, pathW int
 	for _, p := range projects {
@@ -744,7 +786,7 @@ func writeList(w io.Writer, sources map[string]agent.Source, projects []family.P
 			at := family.Project{Path: d, Members: slices.DeleteFunc(slices.Clone(p.Members), func(m agent.Project) bool {
 				return agent.NormalisePath(m.Path) != agent.NormalisePath(d)
 			})}
-			r.dirs = append(r.dirs, dir{path: d, count: counted(sources, at)})
+			r.dirs = append(r.dirs, dirCount{path: d, count: counted(sources, at)})
 		}
 
 		rows = append(rows, r)
@@ -760,13 +802,18 @@ func writeList(w io.Writer, sources map[string]agent.Source, projects []family.P
 	if pathW > pathLimit {
 		pathW = pathLimit
 	}
+	return listing{rows: rows, nameW: nameW, pathW: pathW}
+}
 
-	for _, r := range rows {
-		fmt.Fprintf(w, "%-*s  %-*s  %s\n", nameW, r.name, pathW, r.path, r.count.say())
+// writeTo prints the listing, one line per project. Nothing is read here; the
+// reading was done to build it.
+func (l listing) writeTo(w io.Writer) error {
+	for _, r := range l.rows {
+		fmt.Fprintf(w, "%-*s  %-*s  %s\n", l.nameW, r.name, l.pathW, r.path, r.count.say())
 
 		// Under the project's own path, so the directories read as parts of it.
 		for _, d := range r.dirs {
-			fmt.Fprintf(w, "%-*s  %-*s  %s\n", nameW, "", pathW, d.path, d.count.say())
+			fmt.Fprintf(w, "%-*s  %-*s  %s\n", l.nameW, "", l.pathW, d.path, d.count.say())
 		}
 	}
 	return nil

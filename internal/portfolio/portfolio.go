@@ -169,11 +169,15 @@ func New(tool string, generated time.Time, families []Family) Portfolio {
 // arrives is the same entry that is there afterwards.
 func Known(p family.Project) Family {
 	return Family{
-		Key:         p.Key(),
-		Name:        p.Name(),
-		Path:        p.Path,
-		Agents:      p.Agents(),
-		Directories: p.Directories(),
+		Key:  p.Key(),
+		Name: p.Name(),
+		Path: p.Path,
+		// Copied empty rather than left nil, as the lists above and below
+		// are: a family carrying no agents is one with an empty list of
+		// them, and a reader that has to tell null from [] is reading two
+		// spellings of the same nothing.
+		Agents:      append([]string{}, p.Agents()...),
+		Directories: append([]string{}, p.Directories()...),
 		LastWorked:  p.LastWorked(),
 		Sittings:    []Sitting{},
 	}

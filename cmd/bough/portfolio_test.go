@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -179,18 +180,50 @@ func TestPortfolioTellsAQuietProjectFromABrokenOne(t *testing.T) {
 // Every project is summarised, however many there are and however few slots
 // they are read through. Run under -race this is also the check that reading
 // them at once is safe.
+//
+// Which is why git is read here rather than skipped. --no-repo returns from
+// elsewhere before the disk is touched and skips the repository read outright,
+// so a builder carrying noRepo would run all of this through the one piece of
+// state that is not shared — the stub source — and prove nothing about the
+// three that are: the disk's memory of what it has read, the resolver every
+// edited file is placed by, and the agents' own records. Every project sits
+// inside one checkout so the workers ask about the same repository at the same
+// moment, which is the contended case rather than the lucky one.
 func TestPortfolioSummarisesMoreProjectsThanRunAtOnce(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("git", "init", "-q", root)
+	// Without whatever repository a hook exported, or git would init that one.
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "GIT_") {
+			cmd.Env = append(cmd.Env, kv)
+		}
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+
 	want := atOnce*3 + 1
 	projects := make([]family.Project, want)
+	members := make([]agent.Project, want)
 	for i := range projects {
 		name := "p" + strconv.Itoa(i)
-		projects[i] = project(name, "/work/"+name, "claude-code")
+		projects[i] = project(name, filepath.ToSlash(filepath.Join(root, name)), "claude-code")
+		members[i] = projects[i].Members[0]
 	}
+
+	made := everyAgentsRecord()
+	disk := &repo.Disk{}
 	b := builder{
 		sources:  map[string]agent.Source{"claude-code": readable{}},
-		disk:     &repo.Disk{},
-		families: family.WithoutRepository(nil, nil),
-		noRepo:   true,
+		made:     made,
+		disk:     disk,
+		families: family.New(members, made, disk),
 		stderr:   io.Discard,
 	}
 
